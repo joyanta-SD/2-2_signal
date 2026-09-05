@@ -1,0 +1,10 @@
+# AirBudds — Acoustic OFDM Data Transceiver & Signal Analyzer
+# Dependencies
+
+numpy>=1.24
+scipy>=1.11
+matplotlib>=3.7
+sounddevice>=0.4
+pytest>=7.0
+# PyAudio>=0.2.14  # Optional fallback — requires PortAudio C library.
+#   To install on Windows: pip install pipwin && pipwin install pyaudio
