@@ -13,10 +13,8 @@ from config import AirBuddsConfig
 from core.ofdm_transceiver import OFDMTransceiver
 from core.crc import CRCEngine
 from audio.audio_interface import AudioInterface
-from dsp.rir_simulator import RIRSimulator
 from dsp.spectral_shift import SpectralShifter
 from dsp.watermark import AudioWatermark
-from dsp.lms_filter import LMSFilter
 from protocol.codec import Codec
 
 if TYPE_CHECKING:
@@ -41,21 +39,33 @@ class ControlPanel:
         self.dashboard = dashboard
         self.config = dashboard.config
         
-        self.container = tk.Frame(self.parent, bg=dashboard.accent_color)
-        self.container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # Scrollable container so all controls are accessible
+        self._canvas = tk.Canvas(self.parent, bg=dashboard.accent_color, highlightthickness=0)
+        self._scrollbar = ttk.Scrollbar(self.parent, orient=tk.VERTICAL, command=self._canvas.yview)
+        self.container = tk.Frame(self._canvas, bg=dashboard.accent_color)
+        
+        self.container.bind('<Configure>', lambda e: self._canvas.configure(scrollregion=self._canvas.bbox('all')))
+        self._canvas.create_window((0, 0), window=self.container, anchor='nw')
+        self._canvas.configure(yscrollcommand=self._scrollbar.set)
+        
+        self._scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Mousewheel scrolling
+        def _on_mousewheel(event):
+            self._canvas.yview_scroll(int(-1 * (event.delta / 120)), 'units')
+        self._canvas.bind_all('<MouseWheel>', _on_mousewheel)
         
         self.variables = {}
         self._listening = False
         
         self._setup_text_input()
         self._setup_wav_file_transfer()
+        self._setup_rx_controls()
         self._setup_file_input()
         self._setup_device_selector()
         self._setup_modulation_selector()
         self._setup_mode_toggles()
-        self._setup_rx_controls()
-        self._setup_rir_controls()
-        self._setup_parameter_sliders()
 
     def _setup_device_selector(self):
         """Setup audio hardware device selectors for microphone and speaker."""
@@ -222,44 +232,7 @@ class ControlPanel:
         btn_stop = ttk.Button(frame, text="Stop", command=self._on_stop_listening)
         btn_stop.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=2, pady=5)
 
-    def _setup_rir_controls(self):
-        """Setup Room Impulse Response (RIR) simulation controls."""
-        frame = ttk.LabelFrame(self.container, text="RIR Channel Simulation (Offline)")
-        frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        self.variables['rir_preset'] = tk.StringVar(value='small_room')
-        combo = ttk.Combobox(frame, textvariable=self.variables['rir_preset'], 
-                             values=['small_room', 'hallway', 'open_air', 'anechoic'], state='readonly')
-        combo.pack(fill=tk.X, padx=5, pady=2)
-        
-        lbl = tk.Label(frame, text="Channel SNR (dB):", bg=self.dashboard.accent_color, fg='white')
-        lbl.pack(anchor='w', padx=5)
-        self.variables['snr'] = tk.DoubleVar(value=30.0)
-        scale = tk.Scale(frame, variable=self.variables['snr'], from_=0, to=50, orient=tk.HORIZONTAL, 
-                         bg=self.dashboard.accent_color, fg='white', highlightthickness=0)
-        scale.pack(fill=tk.X, padx=5)
-        
-        btn = ttk.Button(frame, text="Run Simulation & Equalize", command=self._on_run_simulation)
-        btn.pack(fill=tk.X, padx=5, pady=5)
 
-    def _setup_parameter_sliders(self):
-        """Setup sliders for system parameters."""
-        frame = ttk.LabelFrame(self.container, text="DSP Parameters")
-        frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        # CP Length
-        tk.Label(frame, text="Cyclic Prefix (samples):", bg=self.dashboard.accent_color, fg='white').pack(anchor='w', padx=5)
-        self.variables['cp_length'] = tk.IntVar(value=256)
-        scale_cp = tk.Scale(frame, variable=self.variables['cp_length'], from_=64, to=512, resolution=64, 
-                            orient=tk.HORIZONTAL, bg=self.dashboard.accent_color, fg='white', highlightthickness=0)
-        scale_cp.pack(fill=tk.X, padx=5)
-        
-        # LMS Step Size
-        tk.Label(frame, text="LMS Step Size (x10^-3):", bg=self.dashboard.accent_color, fg='white').pack(anchor='w', padx=5)
-        self.variables['lms_mu'] = tk.DoubleVar(value=1.0)
-        scale_mu = tk.Scale(frame, variable=self.variables['lms_mu'], from_=0.1, to=10.0, resolution=0.1, 
-                            orient=tk.HORIZONTAL, bg=self.dashboard.accent_color, fg='white', highlightthickness=0)
-        scale_mu.pack(fill=tk.X, padx=5)
 
     def _on_browse_file(self):
         filepath = filedialog.askopenfilename()
@@ -457,62 +430,6 @@ class ControlPanel:
         except Exception as e:
             self.dashboard.set_status(f"TX Error: {e}")
 
-    def _on_run_simulation(self):
-        text = self.text_entry.get().strip() or "Hello AirBudds! 🔊"
-        threading.Thread(target=self._sim_worker, args=(text.encode('utf-8'),), daemon=True).start()
-
-    def _sim_worker(self, data: bytes):
-        try:
-            self.dashboard.set_status("Running RIR channel simulation...")
-            overrides = self.get_config_overrides()
-            mod_str = overrides['modulation']
-            order = int(mod_str.split('-')[0])
-            self.dashboard.config.qam.order = order
-            self.dashboard.config.ofdm.cp_length = overrides['cp_length']
-            self.dashboard.config.rir.preset = overrides['rir_preset']
-            self.dashboard.config.rir.snr_db = overrides['snr']
-            longer = self.variables.get('longer_audio', tk.BooleanVar(value=True)).get()
-            self.dashboard.config.ofdm.symbol_repeats = 2 if longer else 1
-
-            transceiver = OFDMTransceiver(self.dashboard.config)
-            tx_signal = transceiver.encode(data)
-
-            # Simulate acoustic room channel
-            rir = RIRSimulator(self.dashboard.config.rir, self.dashboard.config.audio.sample_rate)
-            rx_signal = rir.simulate(tx_signal)
-
-            # LMS Adaptive Filter
-            if overrides['noise_cancellation']:
-                lms = LMSFilter(self.dashboard.config.lms)
-                lms.mu = overrides['lms_step_size']
-                rx_signal = lms.cancel_noise(rx_signal)
-
-            # Decode
-            payload, meta = transceiver.decode(rx_signal)
-            is_valid = meta.get('crc_valid', False)
-
-            rx_const = transceiver.get_rx_constellation()
-            post_eq = rx_const[1] if rx_const is not None else None
-            ideal = transceiver.qam.get_constellation_points()
-            H_resp = transceiver.get_channel_estimate()
-            decoded_str = payload.decode('utf-8', errors='replace')
-            status_text = f"Sim Complete | CRC: {'✓ VALID' if is_valid else '✗ CORRUPT'} | SNR: {overrides['snr']:.0f} dB | Preset: {overrides['rir_preset']} | Decoded: '{decoded_str}'"
-
-            def _update_ui():
-                self.rx_display.delete(0, tk.END)
-                self.rx_display.insert(0, decoded_str)
-                self.dashboard.set_status(status_text)
-                self.dashboard.update_plots(
-                    tx_signal=tx_signal,
-                    rx_signal=rx_signal,
-                    constellation=post_eq if post_eq is not None else ideal,
-                    channel_H=H_mag,
-                    ideal_points=ideal
-                )
-
-            self.dashboard.root.after(0, _update_ui)
-        except Exception as e:
-            self.dashboard.set_status(f"Sim Error: {e}")
 
     def _on_start_listening(self):
         if self._listening:
@@ -579,8 +496,6 @@ class ControlPanel:
             'ultrasonic': self.variables['ultrasonic'].get(),
             'noise_cancellation': self.variables['noise_canc'].get(),
             'watermark': self.variables['watermark'].get(),
-            'rir_preset': self.variables['rir_preset'].get(),
-            'snr': self.variables['snr'].get(),
-            'cp_length': self.variables['cp_length'].get(),
-            'lms_step_size': self.variables['lms_mu'].get() * 1e-3
+            'cp_length': getattr(self.dashboard.config.ofdm, 'cp_length', 256),
+            'lms_step_size': 1e-3
         }
