@@ -8,7 +8,7 @@
 
 ## 📖 Project Description
 
-AirBudds is an interactive software application that **transmits and receives digital data (text or small files) over the air using sound waves**. By implementing Orthogonal Frequency Division Multiplexing (OFDM) and Quadrature Amplitude Modulation (QAM), AirBudds transforms a standard computer speaker and microphone into a complete digital communication transceiver.
+AirBudds is an interactive software application that **transmits and receives digital data (text or small files) over the air using sound waves**. It features a **Dual-Mode Architecture**, supporting both a highly robust, low-speed **Morse Code** transceiver and a high-speed **Orthogonal Frequency Division Multiplexing (OFDM)** transceiver. By implementing techniques like Quadrature Amplitude Modulation (QAM), Reed-Solomon Error Correction, and Schmidl-Cox synchronization, AirBudds transforms a standard computer speaker and microphone into a highly resilient digital communication system.
 
 ## 🏗️ Architecture
 
@@ -28,9 +28,12 @@ AirBudds is an interactive software application that **transmits and receives di
 
 | Feature | Module | Description |
 |---------|--------|-------------|
+| **Dual-Mode Transceiver** | `core/morse_transceiver.py`, `core/ofdm_transceiver.py` | Seamlessly switch between Morse Code and OFDM |
 | **OFDM Modulation** | `core/ofdm_transceiver.py` | IFFT synthesis, cyclic prefix, multi-carrier transmission |
 | **QAM Mapping** | `core/qam_mapper.py` | 4/16/64-QAM with Gray coding |
-| **Preamble Sync** | `core/preamble.py` | LFM chirp matched filtering for microsecond timing |
+| **Forward Error Correction** | `protocol/codec.py` | Reed-Solomon FEC to natively correct acoustic burst errors |
+| **Block Interleaving** | `protocol/codec.py` | Scrambles bytes to protect against sustained acoustic clicks |
+| **Schmidl-Cox Sync** | `core/synchronizer.py` | Precise fractional/integer CFO estimation using preamble halves |
 | **Channel Estimation** | `core/channel_estimator.py` | Pilot-tone estimation + Zero-Forcing/MMSE equalization |
 | **LMS Noise Cancel** | `dsp/lms_filter.py` | Adaptive filter to subtract steady background noise |
 | **RIR Simulator** | `dsp/rir_simulator.py` | Offline room echo simulation via FIR convolution |
@@ -73,9 +76,10 @@ Launches the interactive dashboard with waveform, spectrogram, and constellation
 ### Transmit Text
 
 ```bash
-python main.py --tx "Hello AirBudds!"
-python main.py --tx "Secret message" --ultrasonic    # Silent mode
-python main.py --tx "Hi" --qam 16                     # 16-QAM
+python main.py --mode ofdm --tx "Hello AirBudds!"
+python main.py --mode morse --tx "SOS"
+python main.py --mode ofdm --tx "Secret message" --ultrasonic    # Silent mode
+python main.py --mode ofdm --tx "Hi" --qam 16                     # 16-QAM
 ```
 
 ### Receive & Decode
@@ -95,7 +99,7 @@ python main.py --sim --preset hallway --snr 15 --qam 16 --verbose
 ### All Options
 
 ```
-usage: AirBudds [-h] [--gui | --tx MSG | --tx-file PATH | --rx | --sim]
+usage: AirBudds [-h] [--mode {morse,ofdm}] [--gui | --tx MSG | --tx-file PATH | --rx | --sim]
                 [--duration SEC] [--qam {4,16,64}] [--ultrasonic]
                 [--preset {anechoic,small_room,hallway,open_air}]
                 [--snr DB] [--noise-cancel] [--watermark] [--retries N] [-v]
@@ -106,8 +110,9 @@ usage: AirBudds [-h] [--gui | --tx MSG | --tx-file PATH | --rx | --sim]
 ### Transmitter (TX)
 
 ```
-Data → UTF-8 → CRC-32 Append → Bits → QAM Modulation → Pilot Insertion
-    → IFFT → Cyclic Prefix → Preamble Prepend → [Optional: Ultrasonic Shift]
+Data → UTF-8 → CRC-32 Append → Reed-Solomon FEC Encode → Block Interleave
+    → QAM Modulation → Pilot Insertion → IFFT → Cyclic Prefix
+    → Preamble Prepend → [Optional: Ultrasonic Shift]
     → [Optional: Watermark Embed] → Speaker Playback
 ```
 
@@ -115,9 +120,10 @@ Data → UTF-8 → CRC-32 Append → Bits → QAM Modulation → Pilot Insertion
 
 ```
 Microphone → [Optional: Watermark Detect] → [Optional: Ultrasonic Downshift]
-    → [Optional: LMS Noise Cancel] → Preamble Matched Filter → Frame Sync
+    → [Optional: LMS Noise Cancel] → Preamble Matched Filter → Schmidl-Cox Sync
     → CP Removal → FFT → Pilot Extraction → Channel Estimation
-    → Zero-Forcing/MMSE Equalization → QAM Demodulation → CRC Verify → Data
+    → Zero-Forcing/MMSE Equalization → QAM Demodulation 
+    → Block Deinterleave → Reed-Solomon FEC Decode → CRC Verify → Data
 ```
 
 ## 🧪 Testing
@@ -141,11 +147,12 @@ final signal project/
 ├── README.md                   # This file
 │
 ├── core/                       # Core DSP Engine
+│   ├── morse_transceiver.py    # Morse code TX/RX
 │   ├── ofdm_transceiver.py     # Full OFDM TX/RX pipeline
 │   ├── qam_mapper.py           # QAM constellation mapping
 │   ├── preamble.py             # LFM chirp sync
 │   ├── channel_estimator.py    # Pilot-tone channel estimation
-│   ├── synchronizer.py         # Timing & CFO correction
+│   ├── synchronizer.py         # Schmidl-Cox Timing & CFO correction
 │   └── crc.py                  # CRC-32 checksum
 │
 ├── audio/                      # Audio Hardware Interface

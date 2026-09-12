@@ -12,6 +12,7 @@ import scipy.signal as signal
 
 from config import AirBuddsConfig
 from core.morse_transceiver import MorseTransceiver
+from core.ofdm_transceiver import OFDMTransceiver
 from audio.audio_interface import AudioInterface
 
 if TYPE_CHECKING:
@@ -83,19 +84,45 @@ class ControlPanel:
         self.mic_level_lbl.pack()
 
     def _setup_morse_settings(self):
-        frame = ttk.LabelFrame(self.container, text="Morse Code Settings")
-        frame.pack(fill=tk.X, padx=5, pady=5)
+        self.settings_frame = ttk.LabelFrame(self.container, text="Transceiver Settings")
+        self.settings_frame.pack(fill=tk.X, padx=5, pady=5)
         
-        tk.Label(frame, text="Speed (Words Per Minute):", bg=self.dashboard.accent_color, fg='white').pack(anchor='w', padx=5)
+        tk.Label(self.settings_frame, text="Mode:", bg=self.dashboard.accent_color, fg='white').pack(anchor='w', padx=5)
+        self.mode_var = tk.StringVar(value=self.config.mode)
+        combo_mode = ttk.Combobox(self.settings_frame, textvariable=self.mode_var, values=["morse", "ofdm"], state='readonly')
+        combo_mode.pack(fill=tk.X, padx=5, pady=2)
+        combo_mode.bind("<<ComboboxSelected>>", self._on_mode_changed)
         
+        self.morse_frame = tk.Frame(self.settings_frame, bg=self.dashboard.accent_color)
+        
+        tk.Label(self.morse_frame, text="Morse Speed (WPM):", bg=self.dashboard.accent_color, fg='white').pack(anchor='w', padx=5)
         self.wpm_var = tk.DoubleVar(value=self.config.morse_wpm)
-        scale = tk.Scale(frame, from_=5, to=100, orient=tk.HORIZONTAL, variable=self.wpm_var, 
+        scale = tk.Scale(self.morse_frame, from_=5, to=100, orient=tk.HORIZONTAL, variable=self.wpm_var, 
                          bg=self.dashboard.accent_color, fg='white', highlightthickness=0)
         scale.pack(fill=tk.X, padx=5)
         
-        lbl = tk.Label(frame, text="20-40 WPM for human listening; 100 WPM for fast file transfer.", 
+        lbl = tk.Label(self.morse_frame, text="20-40 WPM for human listening; 100 WPM for fast file transfer.", 
                        bg=self.dashboard.accent_color, fg='#8888aa', font=('Segoe UI', 8))
         lbl.pack(anchor='w', padx=5, pady=(0, 2))
+
+        self.ofdm_frame = tk.Frame(self.settings_frame, bg=self.dashboard.accent_color)
+        
+        tk.Label(self.ofdm_frame, text="QAM Order:", bg=self.dashboard.accent_color, fg='white').pack(anchor='w', padx=5)
+        self.qam_var = tk.StringVar(value=str(self.config.qam.order))
+        combo_qam = ttk.Combobox(self.ofdm_frame, textvariable=self.qam_var, values=["4", "16", "64"], state='readonly')
+        combo_qam.pack(fill=tk.X, padx=5, pady=2)
+        
+        self._on_mode_changed()
+
+    def _on_mode_changed(self, event=None):
+        mode = self.mode_var.get()
+        self.dashboard.update_mode(mode)
+        if mode == "morse":
+            self.ofdm_frame.pack_forget()
+            self.morse_frame.pack(fill=tk.X, pady=2)
+        else:
+            self.morse_frame.pack_forget()
+            self.ofdm_frame.pack(fill=tk.X, pady=2)
 
     def _setup_text_input(self):
         frame = ttk.LabelFrame(self.container, text="Text Transmission")
@@ -173,8 +200,15 @@ class ControlPanel:
         if filepath:
             self.file_path_var.set(filepath)
 
-    def _apply_morse_config(self):
+    def _apply_transceiver_config(self):
+        self.dashboard.config.mode = self.mode_var.get()
         self.dashboard.config.morse_wpm = self.wpm_var.get()
+        self.dashboard.config.qam.order = int(self.qam_var.get())
+
+    def _get_transceiver(self):
+        if self.dashboard.config.mode == "ofdm":
+            return OFDMTransceiver(self.dashboard.config)
+        return MorseTransceiver(self.dashboard.config)
 
     def _read_file_payload(self, filepath: str) -> bytes:
         with open(filepath, 'rb') as f:
@@ -188,7 +222,7 @@ class ControlPanel:
     def _on_transmit_text(self):
         text = self.text_entry.get().strip()
         if not text: return
-        self._apply_morse_config()
+        self._apply_transceiver_config()
         threading.Thread(target=self._tx_worker, args=(text.encode('utf-8'),), daemon=True).start()
 
     def _on_transmit_file(self):
@@ -196,7 +230,7 @@ class ControlPanel:
         if not os.path.exists(filepath):
             messagebox.showwarning("Warning", "Please select a valid file first.")
             return
-        self._apply_morse_config()
+        self._apply_transceiver_config()
         payload = self._read_file_payload(filepath)
         threading.Thread(target=self._tx_worker, args=(payload,), daemon=True).start()
 
@@ -205,9 +239,9 @@ class ControlPanel:
         if not text: return
         save_path = filedialog.asksaveasfilename(defaultextension=".wav", filetypes=[("WAV Audio Files", "*.wav")])
         if not save_path: return
-        self._apply_morse_config()
+        self._apply_transceiver_config()
         
-        transceiver = MorseTransceiver(self.dashboard.config)
+        transceiver = self._get_transceiver()
         tx_signal = transceiver.encode(text.encode('utf-8'))
         fs = self.dashboard.config.audio.sample_rate
         
@@ -222,10 +256,10 @@ class ControlPanel:
         save_path = filedialog.asksaveasfilename(defaultextension=".wav", filetypes=[("WAV Audio Files", "*.wav")])
         if not save_path: return
         
-        self._apply_morse_config()
+        self._apply_transceiver_config()
         payload = self._read_file_payload(filepath)
         
-        transceiver = MorseTransceiver(self.dashboard.config)
+        transceiver = self._get_transceiver()
         tx_signal = transceiver.encode(payload)
         fs = self.dashboard.config.audio.sample_rate
         
@@ -234,7 +268,7 @@ class ControlPanel:
 
     def _tx_worker(self, data: bytes):
         try:
-            transceiver = MorseTransceiver(self.dashboard.config)
+            transceiver = self._get_transceiver()
             tx_signal = transceiver.encode(data)
             dur = len(tx_signal) / self.dashboard.config.audio.sample_rate
             
@@ -249,7 +283,7 @@ class ControlPanel:
     def _on_start_listening(self):
         if self._listening: return
         self._listening = True
-        self._apply_morse_config()
+        self._apply_transceiver_config()
         
         try:
             self.audio_interface.start_stream()
@@ -278,7 +312,7 @@ class ControlPanel:
                 self.dashboard.set_status("No audio recorded.")
                 return
                 
-            transceiver = MorseTransceiver(self.dashboard.config)
+            transceiver = self._get_transceiver()
             payload, meta = transceiver.decode(rx_signal)
             decoded_str = payload.decode('utf-8', errors='replace')
             
@@ -288,9 +322,15 @@ class ControlPanel:
                 err = meta.get('error', '')
                 if err:
                     self.dashboard.set_status(f"Decode Error: {err}")
+                elif not payload:
+                    self.dashboard.set_status(f"Decode Error: No valid data found (CRC: {meta.get('crc_valid')})")
                 else:
                     self.dashboard.set_status(f"Decoded: '{decoded_str}'")
-                self.dashboard.update_plots(tx_signal=None, rx_signal=rx_signal)
+                    
+                constellation = None
+                if hasattr(transceiver, 'get_rx_constellation'):
+                    constellation = transceiver.get_rx_constellation()
+                self.dashboard.update_plots(tx_signal=None, rx_signal=rx_signal, constellation=constellation)
                 
             self.dashboard.root.after(0, _update)
         except Exception as e:
@@ -324,7 +364,7 @@ class ControlPanel:
     def _on_upload_decode_audio(self):
         file_path = filedialog.askopenfilename(filetypes=[("WAV Audio Files", "*.wav"), ("All Files", "*.*")])
         if not file_path: return
-        self._apply_morse_config()
+        self._apply_transceiver_config()
         
         self.dashboard.set_status("Decoding WAV...")
         threading.Thread(target=self._decode_file_worker, args=(file_path,), daemon=True).start()
@@ -340,15 +380,22 @@ class ControlPanel:
                 gcd = math.gcd(sr, self.dashboard.config.audio.sample_rate)
                 audio = signal.resample_poly(audio, self.dashboard.config.audio.sample_rate // gcd, sr // gcd).astype(np.float32)
                 
-            transceiver = MorseTransceiver(self.dashboard.config)
+            transceiver = self._get_transceiver()
             payload, meta = transceiver.decode(audio)
             
             def _update():
                 self.rx_display.delete(0, tk.END)
                 text = payload.decode('utf-8', errors='replace')
                 self.rx_display.insert(0, text)
-                self.dashboard.set_status(f"WAV Decoded: '{text}'")
-                self.dashboard.update_plots(tx_signal=None, rx_signal=audio)
+                if not payload:
+                    self.dashboard.set_status(f"WAV Decode Error: No valid data found (CRC: {meta.get('crc_valid')})")
+                else:
+                    self.dashboard.set_status(f"WAV Decoded: '{text}'")
+                    
+                constellation = None
+                if hasattr(transceiver, 'get_rx_constellation'):
+                    constellation = transceiver.get_rx_constellation()
+                self.dashboard.update_plots(tx_signal=None, rx_signal=audio, constellation=constellation)
                 
             self.dashboard.root.after(0, _update)
         except Exception as e:
