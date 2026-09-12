@@ -1,45 +1,28 @@
 from __future__ import annotations
 import os
-import math
+import time
+import base64
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-from typing import TYPE_CHECKING, Dict, Any
+from typing import TYPE_CHECKING
 import numpy as np
 import scipy.io.wavfile as wavfile
 import scipy.signal as signal
 
 from config import AirBuddsConfig
-from core.ofdm_transceiver import OFDMTransceiver
-from core.crc import CRCEngine
+from core.morse_transceiver import MorseTransceiver
 from audio.audio_interface import AudioInterface
-from dsp.spectral_shift import SpectralShifter
-from dsp.watermark import AudioWatermark
-from protocol.codec import Codec
 
 if TYPE_CHECKING:
     from gui.dashboard import Dashboard
 
 class ControlPanel:
-    """
-    Control Panel widget for configuring and operating the AirBudds Transceiver.
-    """
     def __init__(self, parent_frame: tk.Frame, dashboard: 'Dashboard'):
-        """
-        Initialize the control panel.
-        
-        Parameters
-        ----------
-        parent_frame : tk.Frame
-            The Tkinter frame to embed controls into.
-        dashboard : Dashboard
-            Reference to the main dashboard instance.
-        """
         self.parent = parent_frame
         self.dashboard = dashboard
         self.config = dashboard.config
         
-        # Scrollable container so all controls are accessible
         self._canvas = tk.Canvas(self.parent, bg=dashboard.accent_color, highlightthickness=0)
         self._scrollbar = ttk.Scrollbar(self.parent, orient=tk.VERTICAL, command=self._canvas.yview)
         self.container = tk.Frame(self._canvas, bg=dashboard.accent_color)
@@ -51,60 +34,119 @@ class ControlPanel:
         self._scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        # Mousewheel scrolling
         def _on_mousewheel(event):
             self._canvas.yview_scroll(int(-1 * (event.delta / 120)), 'units')
         self._canvas.bind_all('<MouseWheel>', _on_mousewheel)
         
-        self.variables = {}
         self._listening = False
+        self._listening_start_time = 0
+        self.audio_interface = AudioInterface(self.dashboard.config.audio)
         
+        self._setup_device_selector()
+        self._setup_morse_settings()
         self._setup_text_input()
+        self._setup_file_input()
+        self._setup_rx_display_panel()
         self._setup_wav_file_transfer()
         self._setup_rx_controls()
-        self._setup_file_input()
-        self._setup_device_selector()
-        self._setup_modulation_selector()
-        self._setup_mode_toggles()
 
     def _setup_device_selector(self):
-        """Setup audio hardware device selectors for microphone and speaker."""
         frame = ttk.LabelFrame(self.container, text="Audio Devices (Hardware)")
         frame.pack(fill=tk.X, padx=5, pady=4)
         
-        audio = AudioInterface(self.dashboard.config.audio)
-        in_devices = audio.get_input_devices()
-        out_devices = audio.get_output_devices()
+        in_devices = self.audio_interface.get_input_devices()
+        out_devices = self.audio_interface.get_output_devices()
         
-        # Microphone selector
-        tk.Label(frame, text="Microphone (Input):", bg=self.dashboard.accent_color, fg='white').pack(anchor='w', padx=5, pady=(2, 0))
+        tk.Label(frame, text="Microphone:", bg=self.dashboard.accent_color, fg='white').pack(anchor='w', padx=5, pady=(2, 0))
         self.in_dev_map = {name: dev_id for dev_id, name in in_devices}
         in_names = list(self.in_dev_map.keys())
-        default_in_name = next((name for name, d_id in self.in_dev_map.items() if d_id == audio.device_in), in_names[0] if in_names else "No input device")
+        default_in = in_names[0] if in_names else "Default"
         
-        self.in_dev_var = tk.StringVar(value=default_in_name)
+        self.in_dev_var = tk.StringVar(value=default_in)
         combo_in = ttk.Combobox(frame, textvariable=self.in_dev_var, values=in_names, state='readonly')
         combo_in.pack(fill=tk.X, padx=5, pady=2)
         combo_in.bind("<<ComboboxSelected>>", self._on_device_changed)
         
-        # Speaker selector
-        tk.Label(frame, text="Speaker (Output):", bg=self.dashboard.accent_color, fg='white').pack(anchor='w', padx=5, pady=(2, 0))
+        tk.Label(frame, text="Speaker:", bg=self.dashboard.accent_color, fg='white').pack(anchor='w', padx=5, pady=(2, 0))
         self.out_dev_map = {name: dev_id for dev_id, name in out_devices}
         out_names = list(self.out_dev_map.keys())
-        default_out_name = next((name for name, d_id in self.out_dev_map.items() if d_id == audio.device_out), out_names[0] if out_names else "No output device")
+        default_out = out_names[0] if out_names else "Default"
         
-        self.out_dev_var = tk.StringVar(value=default_out_name)
+        self.out_dev_var = tk.StringVar(value=default_out)
         combo_out = ttk.Combobox(frame, textvariable=self.out_dev_var, values=out_names, state='readonly')
         combo_out.pack(fill=tk.X, padx=5, pady=2)
         combo_out.bind("<<ComboboxSelected>>", self._on_device_changed)
         
-        # Mic Test Bar
-        test_frame = tk.Frame(frame, bg=self.dashboard.accent_color)
-        test_frame.pack(fill=tk.X, padx=5, pady=4)
-        btn_test = ttk.Button(test_frame, text="Test Mic Level", command=self._on_test_mic)
-        btn_test.pack(side=tk.LEFT, padx=2)
-        self.mic_level_lbl = tk.Label(test_frame, text="Mic: Ready", bg=self.dashboard.accent_color, fg='#4ec9b0', font=('Segoe UI', 8, 'bold'))
-        self.mic_level_lbl.pack(side=tk.LEFT, padx=5)
+        btn_test = ttk.Button(frame, text="Test Mic Level", command=self._on_test_mic)
+        btn_test.pack(pady=4)
+        self.mic_level_lbl = tk.Label(frame, text="Mic: Ready", bg=self.dashboard.accent_color, fg='#4ec9b0')
+        self.mic_level_lbl.pack()
+
+    def _setup_morse_settings(self):
+        frame = ttk.LabelFrame(self.container, text="Morse Code Settings")
+        frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        tk.Label(frame, text="Speed (Words Per Minute):", bg=self.dashboard.accent_color, fg='white').pack(anchor='w', padx=5)
+        
+        self.wpm_var = tk.DoubleVar(value=self.config.morse_wpm)
+        scale = tk.Scale(frame, from_=5, to=100, orient=tk.HORIZONTAL, variable=self.wpm_var, 
+                         bg=self.dashboard.accent_color, fg='white', highlightthickness=0)
+        scale.pack(fill=tk.X, padx=5)
+        
+        lbl = tk.Label(frame, text="20-40 WPM for human listening; 100 WPM for fast file transfer.", 
+                       bg=self.dashboard.accent_color, fg='#8888aa', font=('Segoe UI', 8))
+        lbl.pack(anchor='w', padx=5, pady=(0, 2))
+
+    def _setup_text_input(self):
+        frame = ttk.LabelFrame(self.container, text="Text Transmission")
+        frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        tk.Label(frame, text="TX Message:", bg=self.dashboard.accent_color, fg='white').pack(anchor='w', padx=5)
+        self.text_entry = tk.Entry(frame, bg='#1a1a2e', fg='white', insertbackground='white')
+        self.text_entry.insert(0, "SOS AIRBUDDS")
+        self.text_entry.pack(fill=tk.X, padx=5, pady=2)
+        
+        btn_box = tk.Frame(frame, bg=self.dashboard.accent_color)
+        btn_box.pack(fill=tk.X, padx=5, pady=3)
+        ttk.Button(btn_box, text="🔊 Transmit (Speaker)", command=self._on_transmit_text).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+        ttk.Button(btn_box, text="💾 Export (.wav)", command=self._on_export_text_audio).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=2)
+
+    def _setup_file_input(self):
+        frame = ttk.LabelFrame(self.container, text="File Transmission")
+        frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        self.file_path_var = tk.StringVar(value="No file selected")
+        tk.Label(frame, textvariable=self.file_path_var, bg=self.dashboard.accent_color, fg='#00ffcc', anchor='w').pack(fill=tk.X, padx=5)
+        
+        btn_browse = ttk.Button(frame, text="📂 Select File...", command=self._on_browse_file)
+        btn_browse.pack(fill=tk.X, padx=5, pady=2)
+        
+        btn_box = tk.Frame(frame, bg=self.dashboard.accent_color)
+        btn_box.pack(fill=tk.X, padx=5, pady=3)
+        ttk.Button(btn_box, text="🔊 Transmit File", command=self._on_transmit_file).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+        ttk.Button(btn_box, text="💾 Export File (.wav)", command=self._on_export_file_audio).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=2)
+
+    def _setup_rx_display_panel(self):
+        frame = ttk.LabelFrame(self.container, text="Decoded RX Result")
+        frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        self.rx_display = tk.Entry(frame, bg='#1a1a2e', fg='#00ffcc', insertbackground='white')
+        self.rx_display.pack(fill=tk.X, padx=5, pady=(2, 5))
+        
+        ttk.Button(frame, text="💾 Save Decoded RX to File", command=self._on_save_rx_to_file).pack(fill=tk.X, padx=5, pady=3)
+
+    def _setup_wav_file_transfer(self):
+        frame = ttk.LabelFrame(self.container, text="Audio File Transfer (WAV)")
+        frame.pack(fill=tk.X, padx=5, pady=4)
+        
+        ttk.Button(frame, text="📂 Upload & Decode Audio (.wav)", command=self._on_upload_decode_audio).pack(fill=tk.X, padx=5, pady=3)
+
+    def _setup_rx_controls(self):
+        frame = ttk.LabelFrame(self.container, text="Live Microphone Receiver")
+        frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        ttk.Button(frame, text="Start Listening", command=self._on_start_listening).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2, pady=5)
+        ttk.Button(frame, text="Stop & Decode", command=self._on_stop_listening).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=2, pady=5)
 
     def _on_device_changed(self, event=None):
         in_name = self.in_dev_var.get()
@@ -118,384 +160,196 @@ class ControlPanel:
         self.mic_level_lbl.config(text="Testing...", fg='#ffcc00')
         def _test():
             try:
-                audio = AudioInterface(self.dashboard.config.audio)
-                peak, rms = audio.test_mic_level(0.4)
+                peak, _ = self.audio_interface.test_mic_level(0.4)
                 pct = int(min(peak * 100, 100))
-                if peak > 0.003:
-                    status = f"Mic Level: {pct}% (Active 🟢)"
-                    color = '#4ec9b0'
-                else:
-                    status = f"Mic Level: {pct}% (Low/Silent ⚠️ Check Privacy)"
-                    color = '#ff6b6b'
-                self.dashboard.root.after(0, lambda: self.mic_level_lbl.config(text=status, fg=color))
+                color = '#4ec9b0' if peak > 0.003 else '#ff6b6b'
+                self.dashboard.root.after(0, lambda: self.mic_level_lbl.config(text=f"Mic Level: {pct}%", fg=color))
             except Exception as e:
-                self.dashboard.root.after(0, lambda: self.mic_level_lbl.config(text=f"Error: {e}", fg='#ff6b6b'))
+                self.dashboard.root.after(0, lambda: self.mic_level_lbl.config(text="Error", fg='#ff6b6b'))
         threading.Thread(target=_test, daemon=True).start()
-
-    def _setup_text_input(self):
-        """Setup text input field, received display, and transmit button."""
-        frame = ttk.LabelFrame(self.container, text="Text Transmission")
-        frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        tk.Label(frame, text="TX Message:", bg=self.dashboard.accent_color, fg='white').pack(anchor='w', padx=5, pady=(2, 0))
-        self.text_entry = tk.Entry(frame, bg='#1a1a2e', fg='white', insertbackground='white')
-        self.text_entry.insert(0, "Hello AirBudds! 🔊")
-        self.text_entry.pack(fill=tk.X, padx=5, pady=2)
-        
-        btn = ttk.Button(frame, text="Transmit Text (Speaker)", command=self._on_transmit_text)
-        btn.pack(fill=tk.X, padx=5, pady=3)
-        
-        tk.Label(frame, text="Decoded RX Result:", bg=self.dashboard.accent_color, fg=self.dashboard.text_color).pack(anchor='w', padx=5, pady=(4, 0))
-        self.rx_display = tk.Entry(frame, bg='#1a1a2e', fg='#00ffcc', insertbackground='white')
-        self.rx_display.pack(fill=tk.X, padx=5, pady=(2, 5))
-
-    def _setup_wav_file_transfer(self):
-        """Setup controls for exporting transmission to WAV and uploading WAV for decoding."""
-        frame = ttk.LabelFrame(self.container, text="Audio File Transfer (WAV)")
-        frame.pack(fill=tk.X, padx=5, pady=4)
-        
-        btn_box = tk.Frame(frame, bg=self.dashboard.accent_color)
-        btn_box.pack(fill=tk.X, padx=5, pady=3)
-        
-        btn_export = ttk.Button(btn_box, text="💾 Export Audio (.wav)", command=self._on_export_audio)
-        btn_export.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
-        
-        btn_upload = ttk.Button(btn_box, text="📂 Upload & Decode (.wav)", command=self._on_upload_decode_audio)
-        btn_upload.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=2)
-        
-        lbl_hint = tk.Label(frame, text="Download audio to play on phone / upload recorded audio to decode.",
-                            bg=self.dashboard.accent_color, fg='#8888aa', font=('Segoe UI', 8))
-        lbl_hint.pack(anchor='w', padx=5, pady=(0, 2))
-
-    def _setup_file_input(self):
-        """Setup file browsing and transmit buttons."""
-        frame = ttk.LabelFrame(self.container, text="File Transmission")
-        frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        self.file_path_var = tk.StringVar(value="No file selected")
-        lbl = tk.Label(frame, textvariable=self.file_path_var, bg=self.dashboard.accent_color, fg='white', anchor='w')
-        lbl.pack(side=tk.TOP, fill=tk.X, padx=5, pady=2)
-        
-        btn_box = tk.Frame(frame, bg=self.dashboard.accent_color)
-        btn_box.pack(fill=tk.X, padx=5, pady=2)
-        btn_browse = ttk.Button(btn_box, text="Browse...", command=self._on_browse_file)
-        btn_browse.pack(side=tk.LEFT, padx=2)
-        btn_tx = ttk.Button(btn_box, text="Transmit File", command=self._on_transmit_file)
-        btn_tx.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=2)
-
-    def _setup_modulation_selector(self):
-        """Setup modulation scheme dropdown."""
-        frame = ttk.LabelFrame(self.container, text="Modulation")
-        frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        self.variables['modulation'] = tk.StringVar(value='4-QAM')
-        combo = ttk.Combobox(frame, textvariable=self.variables['modulation'], 
-                             values=['4-QAM', '16-QAM', '64-QAM'], state='readonly')
-        combo.pack(fill=tk.X, padx=5, pady=5)
-
-    def _setup_mode_toggles(self):
-        """Setup boolean mode toggles."""
-        frame = ttk.LabelFrame(self.container, text="Acoustic Transmission Settings")
-        frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        # Audible Acoustic Mode Indicator
-        lbl = tk.Label(frame, text="🔊 Mode: Pure Audible Sound (800 Hz - 3.5 kHz)", 
-                       bg='#1e3a1e', fg='#4ec9b0', font=('Segoe UI', 9, 'bold'), padx=5, pady=3)
-        lbl.pack(fill=tk.X, padx=5, pady=3)
-        
-        self.variables['ultrasonic'] = tk.BooleanVar(value=False)
-        
-        self.variables['longer_audio'] = tk.BooleanVar(value=True)
-        cb_long = tk.Checkbutton(frame, text="Longer Audio for High Accuracy (2x repeats)", 
-                                 variable=self.variables['longer_audio'], 
-                                 bg=self.dashboard.accent_color, fg='white', selectcolor=self.dashboard.bg_color)
-        cb_long.pack(anchor='w', padx=5, pady=2)
-        
-        self.variables['noise_canc'] = tk.BooleanVar(value=False)
-        cb2 = tk.Checkbutton(frame, text="LMS Noise Cancellation", variable=self.variables['noise_canc'], 
-                             bg=self.dashboard.accent_color, fg='white', selectcolor=self.dashboard.bg_color)
-        cb2.pack(anchor='w', padx=5, pady=2)
-        
-        self.variables['watermark'] = tk.BooleanVar(value=False)
-        cb3 = tk.Checkbutton(frame, text="Spread-Spectrum Watermark", variable=self.variables['watermark'], 
-                             bg=self.dashboard.accent_color, fg='white', selectcolor=self.dashboard.bg_color)
-        cb3.pack(anchor='w', padx=5, pady=2)
-
-    def _setup_rx_controls(self):
-        """Setup receiver control buttons."""
-        frame = ttk.LabelFrame(self.container, text="Live Microphone Receiver")
-        frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        btn_start = ttk.Button(frame, text="Start Listening", command=self._on_start_listening)
-        btn_start.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2, pady=5)
-        
-        btn_stop = ttk.Button(frame, text="Stop", command=self._on_stop_listening)
-        btn_stop.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=2, pady=5)
-
-
 
     def _on_browse_file(self):
         filepath = filedialog.askopenfilename()
         if filepath:
             self.file_path_var.set(filepath)
 
+    def _apply_morse_config(self):
+        self.dashboard.config.morse_wpm = self.wpm_var.get()
+
+    def _read_file_payload(self, filepath: str) -> bytes:
+        with open(filepath, 'rb') as f:
+            raw = f.read()
+        try:
+            return raw.decode('utf-8').encode('utf-8')
+        except Exception:
+            b64 = "B64:" + base64.b64encode(raw).decode('ascii')
+            return b64.encode('utf-8')
+
     def _on_transmit_text(self):
         text = self.text_entry.get().strip()
-        if not text:
-            messagebox.showwarning("Warning", "Please enter text to transmit.")
-            return
+        if not text: return
+        self._apply_morse_config()
         threading.Thread(target=self._tx_worker, args=(text.encode('utf-8'),), daemon=True).start()
 
     def _on_transmit_file(self):
         filepath = self.file_path_var.get()
-        if not filepath or filepath == "No file selected":
-            messagebox.showwarning("Warning", "Please select a file first.")
+        if not os.path.exists(filepath):
+            messagebox.showwarning("Warning", "Please select a valid file first.")
             return
-        try:
-            with open(filepath, 'rb') as f:
-                data = f.read()
-            threading.Thread(target=self._tx_worker, args=(data,), daemon=True).start()
-        except Exception as e:
-            messagebox.showerror("Error", f"Could not read file: {e}")
+        self._apply_morse_config()
+        payload = self._read_file_payload(filepath)
+        threading.Thread(target=self._tx_worker, args=(payload,), daemon=True).start()
 
-    def _on_export_audio(self):
-        """Export current text message to a WAV audio file."""
+    def _on_export_text_audio(self):
         text = self.text_entry.get().strip()
-        if not text:
-            messagebox.showwarning("Warning", "Please enter text to export as audio.")
+        if not text: return
+        save_path = filedialog.asksaveasfilename(defaultextension=".wav", filetypes=[("WAV Audio Files", "*.wav")])
+        if not save_path: return
+        self._apply_morse_config()
+        
+        transceiver = MorseTransceiver(self.dashboard.config)
+        tx_signal = transceiver.encode(text.encode('utf-8'))
+        fs = self.dashboard.config.audio.sample_rate
+        
+        wavfile.write(save_path, fs, (tx_signal * 32767).astype(np.int16))
+        self.dashboard.set_status(f"Exported text audio to {os.path.basename(save_path)} ✓")
+
+    def _on_export_file_audio(self):
+        filepath = self.file_path_var.get()
+        if not os.path.exists(filepath):
+            messagebox.showwarning("Warning", "Please select a valid file first.")
             return
-
-        save_path = filedialog.asksaveasfilename(
-            defaultextension=".wav",
-            filetypes=[("WAV Audio Files", "*.wav"), ("All Files", "*.*")],
-            title="Save Transmitted Acoustic Signal as WAV"
-        )
-        if not save_path:
-            return
-
-        def _export_worker():
-            try:
-                self.dashboard.set_status(f"Encoding '{text}' to WAV...")
-                overrides = self.get_config_overrides()
-                order = int(overrides['modulation'].split('-')[0])
-                self.dashboard.config.qam.order = order
-                self.dashboard.config.ofdm.cp_length = overrides['cp_length']
-                self.dashboard.config.ultrasonic.enabled = overrides['ultrasonic']
-                self.dashboard.config.watermark.enabled = overrides['watermark']
-
-                longer = self.variables.get('longer_audio', tk.BooleanVar(value=True)).get()
-                self.dashboard.config.ofdm.symbol_repeats = 2 if longer else 1
-
-                transceiver = OFDMTransceiver(self.dashboard.config)
-                tx_signal = transceiver.encode(text.encode('utf-8'))
-
-                if overrides['watermark']:
-                    wm = AudioWatermark(self.dashboard.config.watermark, self.dashboard.config.audio.sample_rate)
-                    tx_signal = wm.embed(tx_signal)
-
-                fs = self.dashboard.config.audio.sample_rate
-                lead_in = np.zeros(int(0.25 * fs), dtype=np.float32)
-                lead_out = np.zeros(int(0.25 * fs), dtype=np.float32)
-                full_signal = np.concatenate([lead_in, tx_signal, lead_out])
-
-                max_v = np.max(np.abs(full_signal))
-                norm_sig = (full_signal / max_v * 0.90) if max_v > 0 else full_signal
-                pcm_data = (norm_sig * 32767.0).astype(np.int16)
-
-                wavfile.write(save_path, fs, pcm_data)
-                dur = len(pcm_data) / fs
-
-                ideal = transceiver.qam.get_constellation_points()
-                self.dashboard.root.after(0, lambda: self.dashboard.update_plots(
-                    tx_signal=full_signal, rx_signal=None,
-                    constellation=ideal, channel_H=None, ideal_points=ideal
-                ))
-                self.dashboard.set_status(f"Exported to {os.path.basename(save_path)} ({dur:.2f}s, {order}-QAM) ✓")
-                messagebox.showinfo("Export Successful", f"Acoustic signal saved successfully:\n\n{save_path}\nDuration: {dur:.2f} s\nSample Rate: {fs} Hz\n\nYou can now play this file on any phone or speaker!")
-            except Exception as e:
-                self.dashboard.set_status(f"Export Error: {e}")
-                messagebox.showerror("Export Error", f"Could not save WAV file:\n{e}")
-
-        threading.Thread(target=_export_worker, daemon=True).start()
-
-    def _on_upload_decode_audio(self):
-        """Upload a WAV file, automatically convert/resample, and decode the transmission."""
-        file_path = filedialog.askopenfilename(
-            filetypes=[("WAV Audio Files", "*.wav"), ("All Files", "*.*")],
-            title="Select Audio File to Decode (WAV)"
-        )
-        if not file_path:
-            return
-
-        def _upload_worker():
-            try:
-                self.dashboard.set_status(f"Loading {os.path.basename(file_path)}...")
-                sr, raw_data = wavfile.read(file_path)
-
-                if raw_data.dtype == np.int16:
-                    audio = raw_data.astype(np.float32) / 32768.0
-                elif raw_data.dtype == np.int32:
-                    audio = raw_data.astype(np.float32) / 2147483648.0
-                elif raw_data.dtype == np.uint8:
-                    audio = (raw_data.astype(np.float32) - 128.0) / 128.0
-                else:
-                    audio = raw_data.astype(np.float32)
-
-                if audio.ndim > 1:
-                    audio = np.mean(audio, axis=-1)
-                audio = audio.flatten()
-
-                target_sr = self.dashboard.config.audio.sample_rate
-                if sr != target_sr:
-                    self.dashboard.set_status(f"Resampling from {sr} Hz to {target_sr} Hz...")
-                    gcd = math.gcd(sr, target_sr)
-                    audio = signal.resample_poly(audio, target_sr // gcd, sr // gcd).astype(np.float32)
-
-                overrides = self.get_config_overrides()
-                order = int(overrides['modulation'].split('-')[0])
-                self.dashboard.config.qam.order = order
-                self.dashboard.config.ofdm.cp_length = overrides['cp_length']
-
-                longer = self.variables.get('longer_audio', tk.BooleanVar(value=True)).get()
-                self.dashboard.config.ofdm.symbol_repeats = 2 if longer else 1
-
-                transceiver = OFDMTransceiver(self.dashboard.config)
-                payload, meta = transceiver.decode(audio)
-                is_valid = meta.get('crc_valid', False)
-
-                decoded_str = payload.decode('utf-8', errors='replace')
-                rx_const = transceiver.get_rx_constellation()
-                post_eq = rx_const[1] if rx_const is not None else None
-                ideal = transceiver.qam.get_constellation_points()
-                H_resp = transceiver.get_channel_estimate()
-                H_mag = H_resp[0] if H_resp is not None else None
-
-                def _update_ui():
-                    self.rx_display.delete(0, tk.END)
-                    self.rx_display.insert(0, decoded_str)
-                    self.dashboard.set_status(f"File Decoded | CRC: {'✓ VALID' if is_valid else '✗ FAIL'} | Result: '{decoded_str}'")
-                    self.dashboard.update_plots(
-                        tx_signal=None,
-                        rx_signal=audio,
-                        constellation=post_eq if post_eq is not None else ideal,
-                        channel_H=H_mag,
-                        ideal_points=ideal
-                    )
-                    if is_valid:
-                        messagebox.showinfo("Decode Successful", f"CRC Check: ✓ VALID\n\nDecoded Message:\n{decoded_str}")
-                    else:
-                        messagebox.showwarning("CRC Mismatch", f"CRC Check: ✗ FAILED\n(Signal may have noise or distortion)\n\nRaw extracted string:\n{decoded_str}")
-
-                self.dashboard.root.after(0, _update_ui)
-            except Exception as e:
-                self.dashboard.set_status(f"Upload Decode Error: {e}")
-                messagebox.showerror("Decode Error", f"Failed to decode audio file:\n{e}")
-
-        threading.Thread(target=_upload_worker, daemon=True).start()
+        save_path = filedialog.asksaveasfilename(defaultextension=".wav", filetypes=[("WAV Audio Files", "*.wav")])
+        if not save_path: return
+        
+        self._apply_morse_config()
+        payload = self._read_file_payload(filepath)
+        
+        transceiver = MorseTransceiver(self.dashboard.config)
+        tx_signal = transceiver.encode(payload)
+        fs = self.dashboard.config.audio.sample_rate
+        
+        wavfile.write(save_path, fs, (tx_signal * 32767).astype(np.int16))
+        self.dashboard.set_status(f"Exported file audio to {os.path.basename(save_path)} ✓")
 
     def _tx_worker(self, data: bytes):
         try:
-            self.dashboard.set_status("Encoding OFDM signal...")
-            overrides = self.get_config_overrides()
-            mod_str = overrides['modulation']
-            order = int(mod_str.split('-')[0])
-            self.dashboard.config.qam.order = order
-            self.dashboard.config.ofdm.cp_length = overrides['cp_length']
-            self.dashboard.config.ultrasonic.enabled = overrides['ultrasonic']
-            self.dashboard.config.watermark.enabled = overrides['watermark']
-
-            longer = self.variables.get('longer_audio', tk.BooleanVar(value=True)).get()
-            self.dashboard.config.ofdm.symbol_repeats = 2 if longer else 1
-
-            transceiver = OFDMTransceiver(self.dashboard.config)
+            transceiver = MorseTransceiver(self.dashboard.config)
             tx_signal = transceiver.encode(data)
-
-            if overrides['watermark']:
-                wm = AudioWatermark(self.dashboard.config.watermark, self.dashboard.config.audio.sample_rate)
-                tx_signal = wm.embed(tx_signal)
-
-            # Update dashboard plots with TX waveform and ideal constellation
-            ideal = transceiver.qam.get_constellation_points()
-            self.dashboard.root.after(0, lambda: self.dashboard.update_plots(
-                tx_signal=tx_signal, rx_signal=None,
-                constellation=ideal, channel_H=None, ideal_points=ideal
-            ))
-
             dur = len(tx_signal) / self.dashboard.config.audio.sample_rate
-            self.dashboard.set_status(f"Playing acoustic signal via speaker ({dur:.2f}s, {order}-QAM)...")
-
-            audio = AudioInterface(self.dashboard.config.audio)
-            audio.play(tx_signal, blocking=True)
-            self.dashboard.set_status(f"Transmission complete! ({len(data)} bytes, {order}-QAM, {dur:.2f}s)")
+            
+            self.dashboard.set_status(f"Playing Morse Code ({dur:.1f}s)...")
+            self.dashboard.root.after(0, lambda: self.dashboard.update_plots(tx_signal=tx_signal, rx_signal=None))
+            
+            self.audio_interface.play(tx_signal, blocking=True)
+            self.dashboard.set_status(f"Transmission complete! ({dur:.1f}s)")
         except Exception as e:
             self.dashboard.set_status(f"TX Error: {e}")
 
-
     def _on_start_listening(self):
-        if self._listening:
-            return
+        if self._listening: return
         self._listening = True
-        self.dashboard.set_status("Listening on microphone for acoustic OFDM transmission (6s)...")
-        threading.Thread(target=self._rx_worker, daemon=True).start()
-
-    def _on_stop_listening(self):
-        self._listening = False
-        self.dashboard.set_status("Stopped listening.")
-
-    def _rx_worker(self):
+        self._apply_morse_config()
+        
         try:
-            audio = AudioInterface(self.dashboard.config.audio)
-            rx_signal = audio.record(6.0)
-            if not self._listening:
-                return
-            self.dashboard.set_status("Processing microphone signal...")
-
-            overrides = self.get_config_overrides()
-            if overrides['noise_cancellation']:
-                lms = LMSFilter(self.dashboard.config.lms)
-                rx_signal = lms.cancel_noise(rx_signal)
-
-            longer = self.variables.get('longer_audio', tk.BooleanVar(value=True)).get()
-            self.dashboard.config.ofdm.symbol_repeats = 2 if longer else 1
-
-            transceiver = OFDMTransceiver(self.dashboard.config)
-            payload, meta = transceiver.decode(rx_signal)
-            is_valid = meta.get('crc_valid', False)
-
-            decoded_str = payload.decode('utf-8', errors='replace')
-            rx_const = transceiver.get_rx_constellation()
-            post_eq = rx_const[1] if rx_const is not None else None
-            ideal = transceiver.qam.get_constellation_points()
-            H_resp = transceiver.get_channel_estimate()
-            H_mag = H_resp[0] if H_resp is not None else None
-
-            def _update_ui():
-                self.rx_display.delete(0, tk.END)
-                self.rx_display.insert(0, decoded_str)
-                self.dashboard.set_status(f"Packet Decoded | CRC: {'✓ VALID' if is_valid else '✗ FAIL'} | Result: '{decoded_str}'")
-                self.dashboard.update_plots(
-                    tx_signal=None,
-                    rx_signal=rx_signal,
-                    constellation=post_eq if post_eq is not None else ideal,
-                    channel_H=H_mag,
-                    ideal_points=ideal
-                )
-                self._listening = False
-
-            self.dashboard.root.after(0, _update_ui)
+            self.audio_interface.start_stream()
+            self._listening_start_time = time.time()
+            self._update_listen_timer()
         except Exception as e:
             self._listening = False
-            self.dashboard.set_status(f"Live RX: {e}")
+            messagebox.showerror("Audio Error", str(e))
 
-    def get_config_overrides(self) -> Dict[str, Any]:
-        """
-        Get current UI parameter values.
-        """
-        return {
-            'modulation': self.variables['modulation'].get(),
-            'ultrasonic': self.variables['ultrasonic'].get(),
-            'noise_cancellation': self.variables['noise_canc'].get(),
-            'watermark': self.variables['watermark'].get(),
-            'cp_length': getattr(self.dashboard.config.ofdm, 'cp_length', 256),
-            'lms_step_size': 1e-3
-        }
+    def _update_listen_timer(self):
+        if not self._listening: return
+        elapsed = int(time.time() - self._listening_start_time)
+        self.dashboard.set_status(f"🎤 Listening infinitely... ({elapsed}s elapsed) Click 'Stop' to decode.")
+        self.dashboard.root.after(1000, self._update_listen_timer)
+
+    def _on_stop_listening(self):
+        if not self._listening: return
+        self._listening = False
+        self.dashboard.set_status("Processing recorded Morse code...")
+        threading.Thread(target=self._rx_decode_worker, daemon=True).start()
+
+    def _rx_decode_worker(self):
+        try:
+            rx_signal = self.audio_interface.stop_stream()
+            if len(rx_signal) == 0:
+                self.dashboard.set_status("No audio recorded.")
+                return
+                
+            transceiver = MorseTransceiver(self.dashboard.config)
+            payload, meta = transceiver.decode(rx_signal)
+            decoded_str = payload.decode('utf-8', errors='replace')
+            
+            def _update():
+                self.rx_display.delete(0, tk.END)
+                self.rx_display.insert(0, decoded_str)
+                err = meta.get('error', '')
+                if err:
+                    self.dashboard.set_status(f"Decode Error: {err}")
+                else:
+                    self.dashboard.set_status(f"Decoded: '{decoded_str}'")
+                self.dashboard.update_plots(tx_signal=None, rx_signal=rx_signal)
+                
+            self.dashboard.root.after(0, _update)
+        except Exception as e:
+            self.dashboard.set_status(f"RX Error: {e}")
+
+    def _on_save_rx_to_file(self):
+        content = self.rx_display.get().strip()
+        if not content:
+            messagebox.showwarning("Warning", "No decoded RX content to save.")
+            return
+            
+        save_path = filedialog.asksaveasfilename(
+            title="Save Decoded RX Content to File",
+            defaultextension=".txt",
+            filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")]
+        )
+        if not save_path: return
+        
+        try:
+            if content.startswith("B64:"):
+                raw_bytes = base64.b64decode(content[4:])
+                with open(save_path, 'wb') as f:
+                    f.write(raw_bytes)
+            else:
+                with open(save_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+            messagebox.showinfo("Success", f"File saved successfully to:\n{save_path}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not save file: {e}")
+
+    def _on_upload_decode_audio(self):
+        file_path = filedialog.askopenfilename(filetypes=[("WAV Audio Files", "*.wav"), ("All Files", "*.*")])
+        if not file_path: return
+        self._apply_morse_config()
+        
+        self.dashboard.set_status("Decoding WAV...")
+        threading.Thread(target=self._decode_file_worker, args=(file_path,), daemon=True).start()
+
+    def _decode_file_worker(self, file_path):
+        try:
+            sr, raw = wavfile.read(file_path)
+            audio = raw.astype(np.float32) / 32768.0 if raw.dtype == np.int16 else raw.astype(np.float32)
+            if audio.ndim > 1: audio = np.mean(audio, axis=-1)
+            audio = audio.flatten()
+            
+            if sr != self.dashboard.config.audio.sample_rate:
+                gcd = math.gcd(sr, self.dashboard.config.audio.sample_rate)
+                audio = signal.resample_poly(audio, self.dashboard.config.audio.sample_rate // gcd, sr // gcd).astype(np.float32)
+                
+            transceiver = MorseTransceiver(self.dashboard.config)
+            payload, meta = transceiver.decode(audio)
+            
+            def _update():
+                self.rx_display.delete(0, tk.END)
+                text = payload.decode('utf-8', errors='replace')
+                self.rx_display.insert(0, text)
+                self.dashboard.set_status(f"WAV Decoded: '{text}'")
+                self.dashboard.update_plots(tx_signal=None, rx_signal=audio)
+                
+            self.dashboard.root.after(0, _update)
+        except Exception as e:
+            self.dashboard.set_status(f"WAV Decode Error: {e}")
