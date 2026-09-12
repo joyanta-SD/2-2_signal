@@ -6,5 +6,6 @@ scipy>=1.11
 matplotlib>=3.7
 sounddevice>=0.4
 pytest>=7.0
+reedsolo>=1.7
 # PyAudio>=0.2.14  # Optional fallback — requires PortAudio C library.
 #   To install on Windows: pip install pipwin && pipwin install pyaudio

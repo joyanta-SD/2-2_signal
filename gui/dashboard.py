@@ -8,13 +8,13 @@ from config import AirBuddsConfig, DEFAULT_CONFIG
 from core.morse_transceiver import MorseTransceiver
 from gui.waveform_plot import WaveformPlot
 from gui.spectrogram_plot import SpectrogramPlot
+from gui.constellation_plot import ConstellationPlot
 from gui.controls import ControlPanel
 
 class Dashboard:
     def __init__(self, config: Optional[AirBuddsConfig] = None):
         self.config = config if config is not None else DEFAULT_CONFIG
         self.root = tk.Tk()
-        self.transceiver = MorseTransceiver(self.config)
         
         self.bg_color = '#1a1a2e'
         self.accent_color = '#16213e'
@@ -66,17 +66,27 @@ class Dashboard:
         self.right_panel.columnconfigure(0, weight=1)
         self.right_panel.rowconfigure(0, weight=1)
         self.right_panel.rowconfigure(1, weight=1)
+        self.right_panel.rowconfigure(2, weight=1)
             
-        self.controls = ControlPanel(self.left_panel, self)
-        
         self.plot_frames = []
-        for i in range(2):
+        for i in range(3):
             frame = tk.Frame(self.right_panel, bg=self.plot_bg_color, bd=2, relief='groove')
             frame.grid(row=i, column=0, sticky='nsew', padx=5, pady=5)
             self.plot_frames.append(frame)
             
         self.waveform_plot = WaveformPlot(self.plot_frames[0])
         self.spectrogram_plot = SpectrogramPlot(self.plot_frames[1])
+        self.constellation_plot = ConstellationPlot(self.plot_frames[2])
+        
+        self.controls = ControlPanel(self.left_panel, self)
+        
+        self._update_layout_for_mode()
+
+    def _update_layout_for_mode(self):
+        if self.config.mode == "morse":
+            self.plot_frames[2].grid_remove()
+        else:
+            self.plot_frames[2].grid(row=2, column=0, sticky='nsew', padx=5, pady=5)
 
     def _setup_status_bar(self):
         self.status_var = tk.StringVar()
@@ -100,10 +110,16 @@ class Dashboard:
         spec_sig = rx_signal if (rx_signal is not None and len(rx_signal) > 0) else tx_signal
         if spec_sig is not None and len(spec_sig) > 0:
             self.spectrogram_plot.plot(spec_sig, sample_rate=sr)
+            
+        # If in OFDM mode and we have constellation data in kwargs
+        if self.config.mode == "ofdm" and 'constellation' in kwargs:
+            pre_eq, post_eq = kwargs['constellation']
+            self.constellation_plot.plot(pre_eq, post_eq)
 
     def set_status(self, message: str):
         self.status_var.set(message)
         self.root.update_idletasks()
 
-    def get_transceiver(self) -> Any:
-        return self.transceiver
+    def update_mode(self, mode: str):
+        self.config.mode = mode
+        self._update_layout_for_mode()
