@@ -52,7 +52,10 @@ class AudioInterface:
             return
             
         max_v = np.max(np.abs(signal))
-        volume = min(getattr(self.config, 'volume', 0.85), 0.85)
+        volume = getattr(self.config, 'volume', 0.95)
+        # We cap at 1.0 to prevent hard digital clipping in the output buffer
+        volume = min(volume, 1.0)
+        
         if max_v > 0:
             norm_signal = (signal / max_v) * volume
         else:
