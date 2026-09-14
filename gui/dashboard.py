@@ -16,10 +16,10 @@ class Dashboard:
         self.config = config if config is not None else DEFAULT_CONFIG
         self.root = tk.Tk()
         
-        self.bg_color = '#1a1a2e'
-        self.accent_color = '#16213e'
-        self.text_color = '#e94560'
-        self.plot_bg_color = '#0f3460'
+        self.bg_color = '#0f172a'      # slate-900
+        self.accent_color = '#1e293b'  # slate-800
+        self.text_color = '#38bdf8'    # sky-400
+        self.plot_bg_color = '#0f172a' # slate-900
         
         self.style = ttk.Style()
         self.style.theme_use('clam')
