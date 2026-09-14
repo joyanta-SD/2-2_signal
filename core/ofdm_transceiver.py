@@ -6,6 +6,7 @@ from .preamble import PreambleGenerator
 from .channel_estimator import ChannelEstimator
 from .synchronizer import Synchronizer
 from .crc import CRCEngine
+from dsp.filters import BandpassFilter
 
 class OFDMTransceiver:
     """
@@ -32,6 +33,11 @@ class OFDMTransceiver:
         self.n_fft = getattr(self.config.ofdm, 'fft_size',
                              getattr(self.config.ofdm, 'n_fft', 1024))
         self.cp_length = getattr(self.config.ofdm, 'cp_length', 512) # Extended CP for reverberation
+        
+        # Bandpass filter for out-of-band acoustic noise
+        low_f = self.config.ofdm.guard_band_left * self.config.ofdm.subcarrier_spacing
+        high_f = (self.n_fft // 2 - self.config.ofdm.guard_band_right) * self.config.ofdm.subcarrier_spacing
+        self.bp_filter = BandpassFilter(low_freq=low_f, high_freq=high_f, sample_rate=self.sample_rate, order=5, method='butter')
         
         # Active and Pilot subcarriers
         # Use config helpers if available, else sensible defaults
@@ -70,7 +76,7 @@ class OFDMTransceiver:
         
         # 2. Apply FEC and Interleaving
         from protocol.codec import Codec
-        fec_encoded = Codec.fec_encode(data_with_crc, nsym=10)
+        fec_encoded = Codec.fec_encode(data_with_crc, nsym=30)
         interleaved = Codec.interleave(fec_encoded, depth=16)
         
         import struct
@@ -80,24 +86,26 @@ class OFDMTransceiver:
         bits = np.unpackbits(np.frombuffer(framed_payload, dtype=np.uint8))
 
         
-        # Pad bits to be a multiple of QAM k and data carriers capacity
+        # Pad bits to be a multiple of QAM k and data carriers capacity (halved for diversity)
         k = self.qam.k
-        capacity_per_symbol = len(self.data_carriers) * k
+        capacity_per_symbol = (len(self.data_carriers) // 2) * k
         pad_len = (capacity_per_symbol - (len(bits) % capacity_per_symbol)) % capacity_per_symbol
         if pad_len > 0:
             bits = np.pad(bits, (0, pad_len), 'constant')
             
         # 3. Bits to QAM
-        qam_symbols = self._bits_to_qam(bits)
+        unique_qam_symbols = self._bits_to_qam(bits)
         
-        # 4. Map to OFDM blocks
-        syms_per_ofdm = len(self.data_carriers)
-        num_ofdm_symbols = len(qam_symbols) // syms_per_ofdm
+        # 4. Map to OFDM blocks (with Frequency Diversity)
+        syms_per_ofdm = len(self.data_carriers) // 2
+        num_ofdm_symbols = len(unique_qam_symbols) // syms_per_ofdm
         
         ofdm_blocks = []
         for i in range(num_ofdm_symbols):
-            block_data = qam_symbols[i * syms_per_ofdm : (i + 1) * syms_per_ofdm]
-            subcarriers = self._insert_pilots(block_data)
+            block_data = unique_qam_symbols[i * syms_per_ofdm : (i + 1) * syms_per_ofdm]
+            # Duplicate the block data for frequency diversity
+            full_block_data = np.concatenate([block_data, block_data])
+            subcarriers = self._insert_pilots(full_block_data)
             for _ in range(self.symbol_repeats):
                 ofdm_blocks.append(subcarriers)
             
@@ -176,6 +184,9 @@ class OFDMTransceiver:
         max_rx = np.max(np.abs(rx_signal)) if len(rx_signal) > 0 else 0
         if max_rx > 1e-6:
             rx_signal = (rx_signal / max_rx) * 0.95
+            
+        # Apply Acoustic Bandpass Filter to reject out-of-band noise
+        rx_signal = self.bp_filter.apply(rx_signal)
         
         # 1. Sync
         corrected_sig, start_idx, cfo = self.sync.synchronize(rx_signal)
@@ -211,8 +222,13 @@ class OFDMTransceiver:
             
             # 4. Equalize
             eq_data = self.channel_est.equalize_zf(rx_data, H)
-            post_eq_syms.extend(eq_data)
-            all_rx_data.extend(eq_data)
+            
+            # Frequency diversity combining (average the two copies)
+            half = len(eq_data) // 2
+            combined_data = (eq_data[:half] + eq_data[half:]) / 2.0
+            
+            post_eq_syms.extend(combined_data)
+            all_rx_data.extend(combined_data)
             
         self._last_rx_constellation_pre = np.array(pre_eq_syms)
         self._last_rx_constellation_post = np.array(post_eq_syms)
@@ -239,7 +255,7 @@ class OFDMTransceiver:
                     
                     # FEC Decode
                     if len(fec_encoded) > 0:
-                        data_with_crc = Codec.fec_decode(fec_encoded, nsym=10)
+                        data_with_crc = Codec.fec_decode(fec_encoded, nsym=30)
                         data, is_valid = self.crc.verify_and_strip(data_with_crc)
                         meta['crc_valid'] = is_valid
                         return data, meta
