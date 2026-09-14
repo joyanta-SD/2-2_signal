@@ -80,7 +80,7 @@ class ControlPanel:
         
         btn_test = ttk.Button(frame, text="Test Mic Level", command=self._on_test_mic)
         btn_test.pack(pady=4)
-        self.mic_level_lbl = tk.Label(frame, text="Mic: Ready", bg=self.dashboard.accent_color, fg='#4ec9b0')
+        self.mic_level_lbl = tk.Label(frame, text="Mic: Ready", bg=self.dashboard.accent_color, fg='#34d399')
         self.mic_level_lbl.pack()
 
     def _setup_morse_settings(self):
@@ -102,7 +102,7 @@ class ControlPanel:
         scale.pack(fill=tk.X, padx=5)
         
         lbl = tk.Label(self.morse_frame, text="20-40 WPM for human listening; 100 WPM for fast file transfer.", 
-                       bg=self.dashboard.accent_color, fg='#8888aa', font=('Segoe UI', 8))
+                       bg=self.dashboard.accent_color, fg='#94a3b8', font=('Segoe UI', 8))
         lbl.pack(anchor='w', padx=5, pady=(0, 2))
 
         self.ofdm_frame = tk.Frame(self.settings_frame, bg=self.dashboard.accent_color)
@@ -129,7 +129,7 @@ class ControlPanel:
         frame.pack(fill=tk.X, padx=5, pady=5)
         
         tk.Label(frame, text="TX Message:", bg=self.dashboard.accent_color, fg='white').pack(anchor='w', padx=5)
-        self.text_entry = tk.Entry(frame, bg='#1a1a2e', fg='white', insertbackground='white')
+        self.text_entry = tk.Entry(frame, bg=self.dashboard.bg_color, fg='white', insertbackground='white')
         self.text_entry.insert(0, "SOS AIRBUDDS")
         self.text_entry.pack(fill=tk.X, padx=5, pady=2)
         
@@ -143,7 +143,7 @@ class ControlPanel:
         frame.pack(fill=tk.X, padx=5, pady=5)
         
         self.file_path_var = tk.StringVar(value="No file selected")
-        tk.Label(frame, textvariable=self.file_path_var, bg=self.dashboard.accent_color, fg='#00ffcc', anchor='w').pack(fill=tk.X, padx=5)
+        tk.Label(frame, textvariable=self.file_path_var, bg=self.dashboard.accent_color, fg='#34d399', anchor='w').pack(fill=tk.X, padx=5)
         
         btn_browse = ttk.Button(frame, text="📂 Select File...", command=self._on_browse_file)
         btn_browse.pack(fill=tk.X, padx=5, pady=2)
@@ -157,7 +157,7 @@ class ControlPanel:
         frame = ttk.LabelFrame(self.container, text="Decoded RX Result")
         frame.pack(fill=tk.X, padx=5, pady=5)
         
-        self.rx_display = tk.Entry(frame, bg='#1a1a2e', fg='#00ffcc', insertbackground='white')
+        self.rx_display = tk.Entry(frame, bg=self.dashboard.bg_color, fg='#34d399', insertbackground='white')
         self.rx_display.pack(fill=tk.X, padx=5, pady=(2, 5))
         
         ttk.Button(frame, text="💾 Save Decoded RX to File", command=self._on_save_rx_to_file).pack(fill=tk.X, padx=5, pady=3)
@@ -184,15 +184,15 @@ class ControlPanel:
             self.dashboard.config.audio.device_out = self.out_dev_map[out_name]
 
     def _on_test_mic(self):
-        self.mic_level_lbl.config(text="Testing...", fg='#ffcc00')
+        self.mic_level_lbl.config(text="Testing...", fg='#fbbf24')
         def _test():
             try:
                 peak, _ = self.audio_interface.test_mic_level(0.4)
                 pct = int(min(peak * 100, 100))
-                color = '#4ec9b0' if peak > 0.003 else '#ff6b6b'
+                color = '#34d399' if peak > 0.003 else '#f87171'
                 self.dashboard.root.after(0, lambda: self.mic_level_lbl.config(text=f"Mic Level: {pct}%", fg=color))
             except Exception as e:
-                self.dashboard.root.after(0, lambda: self.mic_level_lbl.config(text="Error", fg='#ff6b6b'))
+                self.dashboard.root.after(0, lambda: self.mic_level_lbl.config(text="Error", fg='#f87171'))
         threading.Thread(target=_test, daemon=True).start()
 
     def _on_browse_file(self):
@@ -213,6 +213,13 @@ class ControlPanel:
     def _read_file_payload(self, filepath: str) -> bytes:
         with open(filepath, 'rb') as f:
             raw = f.read()
+            
+        # Morse code is case-insensitive, so we MUST use Base32 for files
+        # to ensure perfect 1:1 reconstruction of the binary data at the receiver.
+        if self.dashboard.config.mode == "morse":
+            b32 = "B32:" + base64.b32encode(raw).decode('ascii')
+            return b32.encode('utf-8')
+            
         try:
             return raw.decode('utf-8').encode('utf-8')
         except Exception:
@@ -305,6 +312,27 @@ class ControlPanel:
         self.dashboard.set_status("Processing recorded Morse code...")
         threading.Thread(target=self._rx_decode_worker, daemon=True).start()
 
+    def _handle_auto_save(self, text: str) -> str:
+        if text.startswith("B32:") or text.startswith("B64:"):
+            save_dir = os.path.join(os.getcwd(), "received_files")
+            os.makedirs(save_dir, exist_ok=True)
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+            out_path = os.path.join(save_dir, f"rx_file_{stamp}.bin")
+            try:
+                if text.startswith("B64:"):
+                    raw_bytes = base64.b64decode(text[4:])
+                else:
+                    b32_data = text[4:].strip()
+                    pad = (8 - (len(b32_data) % 8)) % 8
+                    b32_data += "=" * pad
+                    raw_bytes = base64.b32decode(b32_data)
+                with open(out_path, 'wb') as f:
+                    f.write(raw_bytes)
+                return f"[Auto-saved file to {out_path}]"
+            except Exception as e:
+                return f"[Auto-save Failed: {e}] {text}"
+        return text
+
     def _rx_decode_worker(self):
         try:
             rx_signal = self.audio_interface.stop_stream()
@@ -318,7 +346,8 @@ class ControlPanel:
             
             def _update():
                 self.rx_display.delete(0, tk.END)
-                self.rx_display.insert(0, decoded_str)
+                display_text = self._handle_auto_save(decoded_str)
+                self.rx_display.insert(0, display_text)
                 err = meta.get('error', '')
                 if err:
                     self.dashboard.set_status(f"Decode Error: {err}")
@@ -354,6 +383,14 @@ class ControlPanel:
                 raw_bytes = base64.b64decode(content[4:])
                 with open(save_path, 'wb') as f:
                     f.write(raw_bytes)
+            elif content.startswith("B32:"):
+                b32_data = content[4:].strip()
+                # Base32 requires padding to be a multiple of 8
+                pad_len = (8 - (len(b32_data) % 8)) % 8
+                b32_data += "=" * pad_len
+                raw_bytes = base64.b32decode(b32_data)
+                with open(save_path, 'wb') as f:
+                    f.write(raw_bytes)
             else:
                 with open(save_path, 'w', encoding='utf-8') as f:
                     f.write(content)
@@ -386,7 +423,8 @@ class ControlPanel:
             def _update():
                 self.rx_display.delete(0, tk.END)
                 text = payload.decode('utf-8', errors='replace')
-                self.rx_display.insert(0, text)
+                display_text = self._handle_auto_save(text)
+                self.rx_display.insert(0, display_text)
                 if not payload:
                     self.dashboard.set_status(f"WAV Decode Error: No valid data found (CRC: {meta.get('crc_valid')})")
                 else:
