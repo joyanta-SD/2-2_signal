@@ -72,6 +72,11 @@ class AudioInterface:
         if blocking:
             sd.wait()
 
+    def stop_play(self) -> None:
+        """Immediately stop any active playback."""
+        if sd is not None:
+            sd.stop()
+
     def start_stream(self, device: int = None):
         """Start infinite background recording."""
         if sd is None:

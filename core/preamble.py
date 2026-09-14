@@ -38,9 +38,27 @@ class PreambleGenerator:
         s(t) = w(t) * cos(2π(f₀t + (B/2T)t²))
         """
         if self.length is not None and self.length > 0:
-            t = np.linspace(0, self.duration, self.length, endpoint=False)
+            length = self.length
+            t = np.linspace(0, self.duration, length, endpoint=False)
         else:
-            t = np.arange(0, self.duration, 1.0 / self.sample_rate)
+            length = int(self.duration * self.sample_rate)
+            t = np.arange(0, self.duration, 1.0 / self.sample_rate)[:length]
+            
+        if getattr(self.config, 'use_noise_preamble', False):
+            # Deterministic pseudo-random noise sequence for stealthy synchronization
+            np.random.seed(42)
+            noise = np.random.normal(0, 1, length)
+            
+            # Bandpass filter the noise to match the chirp's frequency band
+            nyq = self.sample_rate / 2
+            low = max(self.f_start / nyq, 0.01)
+            high = min(self.f_end / nyq, 0.99)
+            if low < high:
+                b, a = signal.butter(5, [low, high], btype='band')
+                noise = signal.filtfilt(b, a, noise)
+                
+            w = np.hanning(len(noise))
+            return (noise / np.max(np.abs(noise))) * w
             
         c = signal.chirp(t, f0=self.f_start, f1=self.f_end, t1=self.duration, method='linear')
         w = np.hanning(len(c))

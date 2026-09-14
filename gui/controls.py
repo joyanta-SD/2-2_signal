@@ -41,6 +41,7 @@ class ControlPanel:
         
         self._listening = False
         self._listening_start_time = 0
+        self._cancel_tx = False
         self.audio_interface = AudioInterface(self.dashboard.config.audio)
         
         self._setup_device_selector()
@@ -89,7 +90,7 @@ class ControlPanel:
         
         tk.Label(self.settings_frame, text="Mode:", bg=self.dashboard.accent_color, fg='white').pack(anchor='w', padx=5)
         self.mode_var = tk.StringVar(value=self.config.mode)
-        combo_mode = ttk.Combobox(self.settings_frame, textvariable=self.mode_var, values=["morse", "ofdm"], state='readonly')
+        combo_mode = ttk.Combobox(self.settings_frame, textvariable=self.mode_var, values=["morse", "ofdm", "steganography"], state='readonly')
         combo_mode.pack(fill=tk.X, padx=5, pady=2)
         combo_mode.bind("<<ComboboxSelected>>", self._on_mode_changed)
         
@@ -112,6 +113,12 @@ class ControlPanel:
         combo_qam = ttk.Combobox(self.ofdm_frame, textvariable=self.qam_var, values=["4", "16", "64"], state='readonly')
         combo_qam.pack(fill=tk.X, padx=5, pady=2)
         
+        self.stego_frame = tk.Frame(self.settings_frame, bg=self.dashboard.accent_color)
+        tk.Label(self.stego_frame, text="Carrier Music (.wav):", bg=self.dashboard.accent_color, fg='white').pack(anchor='w', padx=5, pady=(5,0))
+        self.carrier_path_var = tk.StringVar(value="No carrier selected")
+        tk.Label(self.stego_frame, textvariable=self.carrier_path_var, bg=self.dashboard.accent_color, fg='#34d399', font=('Consolas', 8)).pack(anchor='w', padx=5)
+        ttk.Button(self.stego_frame, text="📂 Select Carrier", command=self._on_browse_carrier).pack(fill=tk.X, padx=5, pady=2)
+        
         self._on_mode_changed()
 
     def _on_mode_changed(self, event=None):
@@ -119,39 +126,47 @@ class ControlPanel:
         self.dashboard.update_mode(mode)
         if mode == "morse":
             self.ofdm_frame.pack_forget()
+            self.stego_frame.pack_forget()
             self.morse_frame.pack(fill=tk.X, pady=2)
+        elif mode == "ofdm":
+            self.morse_frame.pack_forget()
+            self.stego_frame.pack_forget()
+            self.ofdm_frame.pack(fill=tk.X, pady=2)
         else:
             self.morse_frame.pack_forget()
+            self.stego_frame.pack(fill=tk.X, pady=2)
             self.ofdm_frame.pack(fill=tk.X, pady=2)
 
     def _setup_text_input(self):
         frame = ttk.LabelFrame(self.container, text="Text Transmission")
-        frame.pack(fill=tk.X, padx=5, pady=5)
+        frame.pack(fill=tk.X, padx=10, pady=8)
         
-        tk.Label(frame, text="TX Message:", bg=self.dashboard.accent_color, fg='white').pack(anchor='w', padx=5)
-        self.text_entry = tk.Entry(frame, bg=self.dashboard.bg_color, fg='white', insertbackground='white')
+        tk.Label(frame, text="TX Message:", bg=self.dashboard.accent_color, fg='white', font=('Segoe UI', 9, 'bold')).pack(anchor='w', padx=5, pady=(5,0))
+        self.text_entry = tk.Entry(frame, bg=self.dashboard.bg_color, fg='white', insertbackground='white', font=('Consolas', 10), relief=tk.FLAT)
         self.text_entry.insert(0, "SOS AIRBUDDS")
-        self.text_entry.pack(fill=tk.X, padx=5, pady=2)
+        self.text_entry.pack(fill=tk.X, padx=5, pady=5, ipady=3)
         
         btn_box = tk.Frame(frame, bg=self.dashboard.accent_color)
-        btn_box.pack(fill=tk.X, padx=5, pady=3)
-        ttk.Button(btn_box, text="🔊 Transmit (Speaker)", command=self._on_transmit_text).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+        btn_box.pack(fill=tk.X, padx=5, pady=5)
+        ttk.Button(btn_box, text="▶ Transmit", command=self._on_transmit_text).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+        ttk.Button(btn_box, text="🛑 Stop", command=self._on_stop_tx).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
         ttk.Button(btn_box, text="💾 Export (.wav)", command=self._on_export_text_audio).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=2)
 
     def _setup_file_input(self):
         frame = ttk.LabelFrame(self.container, text="File Transmission")
-        frame.pack(fill=tk.X, padx=5, pady=5)
+        frame.pack(fill=tk.X, padx=10, pady=8)
         
         self.file_path_var = tk.StringVar(value="No file selected")
-        tk.Label(frame, textvariable=self.file_path_var, bg=self.dashboard.accent_color, fg='#34d399', anchor='w').pack(fill=tk.X, padx=5)
+        tk.Label(frame, textvariable=self.file_path_var, bg=self.dashboard.accent_color, fg='#34d399', anchor='w', font=('Consolas', 9)).pack(fill=tk.X, padx=5, pady=2)
         
         btn_browse = ttk.Button(frame, text="📂 Select File...", command=self._on_browse_file)
-        btn_browse.pack(fill=tk.X, padx=5, pady=2)
+        btn_browse.pack(fill=tk.X, padx=5, pady=5)
         
         btn_box = tk.Frame(frame, bg=self.dashboard.accent_color)
-        btn_box.pack(fill=tk.X, padx=5, pady=3)
-        ttk.Button(btn_box, text="🔊 Transmit File", command=self._on_transmit_file).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
-        ttk.Button(btn_box, text="💾 Export File (.wav)", command=self._on_export_file_audio).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=2)
+        btn_box.pack(fill=tk.X, padx=5, pady=5)
+        ttk.Button(btn_box, text="▶ Transmit", command=self._on_transmit_file).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+        ttk.Button(btn_box, text="🛑 Stop", command=self._on_stop_tx).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+        ttk.Button(btn_box, text="💾 Export (.wav)", command=self._on_export_file_audio).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=2)
 
     def _setup_rx_display_panel(self):
         frame = ttk.LabelFrame(self.container, text="Decoded RX Result")
@@ -199,6 +214,11 @@ class ControlPanel:
         filepath = filedialog.askopenfilename()
         if filepath:
             self.file_path_var.set(filepath)
+            
+    def _on_browse_carrier(self):
+        filepath = filedialog.askopenfilename(filetypes=[("WAV Audio Files", "*.wav")])
+        if filepath:
+            self.carrier_path_var.set(filepath)
 
     def _apply_transceiver_config(self):
         self.dashboard.config.mode = self.mode_var.get()
@@ -206,24 +226,30 @@ class ControlPanel:
         self.dashboard.config.qam.order = int(self.qam_var.get())
 
     def _get_transceiver(self):
-        if self.dashboard.config.mode == "ofdm":
+        if self.dashboard.config.mode == "steganography":
+            from core.stego_transceiver import SteganographyTransceiver
+            return SteganographyTransceiver(self.dashboard.config)
+        elif self.dashboard.config.mode == "ofdm":
+            from core.ofdm_transceiver import OFDMTransceiver
             return OFDMTransceiver(self.dashboard.config)
+        from core.morse_transceiver import MorseTransceiver
         return MorseTransceiver(self.dashboard.config)
 
     def _read_file_payload(self, filepath: str) -> bytes:
+        filename = os.path.basename(filepath)
         with open(filepath, 'rb') as f:
             raw = f.read()
             
         # Morse code is case-insensitive, so we MUST use Base32 for files
         # to ensure perfect 1:1 reconstruction of the binary data at the receiver.
         if self.dashboard.config.mode == "morse":
-            b32 = "B32:" + base64.b32encode(raw).decode('ascii')
+            b32 = f"B32:{filename}:" + base64.b32encode(raw).decode('ascii')
             return b32.encode('utf-8')
             
         try:
             return raw.decode('utf-8').encode('utf-8')
         except Exception:
-            b64 = "B64:" + base64.b64encode(raw).decode('ascii')
+            b64 = f"B64:{filename}:" + base64.b64encode(raw).decode('ascii')
             return b64.encode('utf-8')
 
     def _on_transmit_text(self):
@@ -249,7 +275,15 @@ class ControlPanel:
         self._apply_transceiver_config()
         
         transceiver = self._get_transceiver()
-        tx_signal = transceiver.encode(text.encode('utf-8'))
+        if self.dashboard.config.mode == "steganography":
+            carrier_path = self.carrier_path_var.get()
+            if not os.path.exists(carrier_path):
+                messagebox.showwarning("Warning", "Please select a valid carrier music file first.")
+                return
+            tx_signal = transceiver.encode_with_carrier(text.encode('utf-8'), carrier_path)
+        else:
+            tx_signal = transceiver.encode(text.encode('utf-8'))
+            
         fs = self.dashboard.config.audio.sample_rate
         
         wavfile.write(save_path, fs, (tx_signal * 32767).astype(np.int16))
@@ -267,22 +301,56 @@ class ControlPanel:
         payload = self._read_file_payload(filepath)
         
         transceiver = self._get_transceiver()
-        tx_signal = transceiver.encode(payload)
+        if self.dashboard.config.mode == "steganography":
+            carrier_path = self.carrier_path_var.get()
+            if not os.path.exists(carrier_path):
+                messagebox.showwarning("Warning", "Please select a valid carrier music file first.")
+                return
+            tx_signal = transceiver.encode_with_carrier(payload, carrier_path)
+        else:
+            tx_signal = transceiver.encode(payload)
+            
         fs = self.dashboard.config.audio.sample_rate
         
         wavfile.write(save_path, fs, (tx_signal * 32767).astype(np.int16))
         self.dashboard.set_status(f"Exported file audio to {os.path.basename(save_path)} ✓")
 
+    def _on_stop_tx(self):
+        self._cancel_tx = True
+        self.audio_interface.stop_play()
+        self.dashboard.set_status("Transmission stopped manually.")
+
     def _tx_worker(self, data: bytes):
         try:
+            self._cancel_tx = False
             transceiver = self._get_transceiver()
-            tx_signal = transceiver.encode(data)
+            
+            if self.dashboard.config.mode == "steganography":
+                carrier_path = self.carrier_path_var.get()
+                if not os.path.exists(carrier_path):
+                    self.dashboard.set_status("TX Error: Please select a valid carrier music file.")
+                    return
+                tx_signal = transceiver.encode_with_carrier(data, carrier_path)
+            else:
+                tx_signal = transceiver.encode(data)
+                
             dur = len(tx_signal) / self.dashboard.config.audio.sample_rate
             
-            self.dashboard.set_status(f"Playing Morse Code ({dur:.1f}s)...")
+            self.dashboard.set_status(f"Playing Signal ({dur:.1f}s)...")
             self.dashboard.root.after(0, lambda: self.dashboard.update_plots(tx_signal=tx_signal, rx_signal=None))
             
-            self.audio_interface.play(tx_signal, blocking=True)
+            self.audio_interface.play(tx_signal, blocking=False)
+            
+            # Poll for completion or cancellation
+            elapsed = 0.0
+            while elapsed < dur:
+                if self._cancel_tx:
+                    self.audio_interface.stop_play()
+                    self.dashboard.set_status("Transmission Aborted.")
+                    return
+                time.sleep(0.1)
+                elapsed += 0.1
+                
             self.dashboard.set_status(f"Transmission complete! ({dur:.1f}s)")
         except Exception as e:
             self.dashboard.set_status(f"TX Error: {e}")
@@ -314,15 +382,29 @@ class ControlPanel:
 
     def _handle_auto_save(self, text: str) -> str:
         if text.startswith("B32:") or text.startswith("B64:"):
+            parts = text.split(":", 2)
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+            if len(parts) == 3:
+                prefix, filename, data_str = parts
+            else:
+                prefix = parts[0]
+                filename = f"rx_file_{stamp}.bin"
+                data_str = parts[1]
+                
             save_dir = os.path.join(os.getcwd(), "received_files")
             os.makedirs(save_dir, exist_ok=True)
-            stamp = time.strftime("%Y%m%d_%H%M%S")
-            out_path = os.path.join(save_dir, f"rx_file_{stamp}.bin")
+            
+            # Handle duplicates
+            out_path = os.path.join(save_dir, filename)
+            if os.path.exists(out_path):
+                base, ext = os.path.splitext(filename)
+                out_path = os.path.join(save_dir, f"{base}_{stamp}{ext}")
+                
             try:
-                if text.startswith("B64:"):
-                    raw_bytes = base64.b64decode(text[4:])
+                if prefix == "B64":
+                    raw_bytes = base64.b64decode(data_str)
                 else:
-                    b32_data = text[4:].strip()
+                    b32_data = data_str.strip()
                     pad = (8 - (len(b32_data) % 8)) % 8
                     b32_data += "=" * pad
                     raw_bytes = base64.b32decode(b32_data)
