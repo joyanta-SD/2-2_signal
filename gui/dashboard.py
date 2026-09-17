@@ -15,21 +15,21 @@ class Dashboard:
     def __init__(self, config: Optional[AirBuddsConfig] = None):
         self.config = config if config is not None else DEFAULT_CONFIG
         self.root = tk.Tk()
-        
-        self.bg_color = '#0f172a'      # slate-900
-        self.accent_color = '#1e293b'  # slate-800
-        self.text_color = '#38bdf8'    # sky-400
-        self.plot_bg_color = '#0f172a' # slate-900
-        
+
+        self.bg_color = '#0f172a'      
+        self.accent_color = '#1e293b'  
+        self.text_color = '#38bdf8'    
+        self.plot_bg_color = '#0f172a' 
+
         self.style = ttk.Style()
         self.style.theme_use('clam')
         self.style.configure('.', background=self.bg_color, foreground='white')
         self.style.configure('TLabelframe', background=self.accent_color, foreground=self.text_color)
         self.style.configure('TLabelframe.Label', background=self.accent_color, foreground=self.text_color)
         self.style.configure('TButton', background=self.plot_bg_color, foreground='white')
-        
+
         self.root.configure(bg=self.bg_color)
-        
+
         self._setup_window()
         self._setup_menu()
         self._setup_layout()
@@ -44,42 +44,42 @@ class Dashboard:
 
     def _setup_menu(self):
         menubar = tk.Menu(self.root)
-        
+
         file_menu = tk.Menu(menubar, tearoff=0)
         file_menu.add_command(label="Exit", command=self.root.quit)
         menubar.add_cascade(label="File", menu=file_menu)
-        
+
         help_menu = tk.Menu(menubar, tearoff=0)
         help_menu.add_command(label="About", command=lambda: messagebox.showinfo("About AirBudds", "AirBudds Morse Transceiver"))
         menubar.add_cascade(label="Help", menu=help_menu)
-        
+
         self.root.config(menu=menubar)
 
     def _setup_layout(self):
         self.left_panel = tk.Frame(self.root, bg=self.accent_color, width=350)
         self.left_panel.grid(row=0, column=0, sticky='nsew', padx=10, pady=10)
         self.left_panel.pack_propagate(False)
-        
+
         self.right_panel = tk.Frame(self.root, bg=self.bg_color)
         self.right_panel.grid(row=0, column=1, sticky='nsew', padx=10, pady=10)
-        
+
         self.right_panel.columnconfigure(0, weight=1)
         self.right_panel.rowconfigure(0, weight=1)
         self.right_panel.rowconfigure(1, weight=1)
         self.right_panel.rowconfigure(2, weight=1)
-            
+
         self.plot_frames = []
         for i in range(3):
             frame = tk.Frame(self.right_panel, bg=self.plot_bg_color, bd=2, relief='groove')
             frame.grid(row=i, column=0, sticky='nsew', padx=5, pady=5)
             self.plot_frames.append(frame)
-            
+
         self.waveform_plot = WaveformPlot(self.plot_frames[0])
         self.spectrogram_plot = SpectrogramPlot(self.plot_frames[1])
         self.constellation_plot = ConstellationPlot(self.plot_frames[2])
-        
+
         self.controls = ControlPanel(self.left_panel, self)
-        
+
         self._update_layout_for_mode()
 
     def _update_layout_for_mode(self):
@@ -99,7 +99,7 @@ class Dashboard:
 
     def update_plots(self, tx_signal: Optional[np.ndarray] = None, rx_signal: Optional[np.ndarray] = None, **kwargs):
         sr = getattr(self.config.audio, 'sample_rate', 44100)
-        
+
         if tx_signal is not None and rx_signal is not None:
             self.waveform_plot.plot_dual(tx_signal, rx_signal, sample_rate=sr)
         elif tx_signal is not None:
@@ -110,8 +110,7 @@ class Dashboard:
         spec_sig = rx_signal if (rx_signal is not None and len(rx_signal) > 0) else tx_signal
         if spec_sig is not None and len(spec_sig) > 0:
             self.spectrogram_plot.plot(spec_sig, sample_rate=sr)
-            
-        # If in OFDM mode and we have constellation data in kwargs
+
         if self.config.mode == "ofdm" and 'constellation' in kwargs:
             pre_eq, post_eq = kwargs['constellation']
             self.constellation_plot.plot(pre_eq, post_eq)

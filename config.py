@@ -87,14 +87,14 @@ class AirBuddsConfig:
     version: str = "4.0-Hybrid"
     team_name: str = "8J3D9"
     members: tuple = ("Joyanta Sutradhar (2305083)", "Dipbroto Karmokar Dip (2305089)")
-    
+
     audio: AudioConfig = field(default_factory=AudioConfig)
     ofdm: OFDMConfig = field(default_factory=OFDMConfig)
     qam: QAMConfig = field(default_factory=QAMConfig)
     preamble: PreambleConfig = field(default_factory=PreambleConfig)
     crc: CRCConfig = field(default_factory=CRCConfig)
     protocol: ProtocolConfig = field(default_factory=ProtocolConfig)
-    
+
     morse_freq: float = 800.0
     morse_wpm: float = 20.0
     mode: str = "morse"

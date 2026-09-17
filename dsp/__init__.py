@@ -1,4 +1,4 @@
-"""AirBudds DSP Utilities — filters, LMS, RIR simulation, spectral shifting, watermark."""
+
 
 from .filters import BandpassFilter, LowpassFilter, HighpassFilter
 from .lms_filter import LMSFilter

@@ -1,4 +1,4 @@
-"""AirBudds Core DSP Engine — OFDM transceiver, QAM, sync, and channel estimation."""
+
 
 from .crc import CRCEngine
 from .qam_mapper import QAMMapper

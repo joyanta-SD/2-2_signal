@@ -23,27 +23,27 @@ class ControlPanel:
         self.parent = parent_frame
         self.dashboard = dashboard
         self.config = dashboard.config
-        
+
         self._canvas = tk.Canvas(self.parent, bg=dashboard.accent_color, highlightthickness=0)
         self._scrollbar = ttk.Scrollbar(self.parent, orient=tk.VERTICAL, command=self._canvas.yview)
         self.container = tk.Frame(self._canvas, bg=dashboard.accent_color)
-        
+
         self.container.bind('<Configure>', lambda e: self._canvas.configure(scrollregion=self._canvas.bbox('all')))
         self._canvas.create_window((0, 0), window=self.container, anchor='nw')
         self._canvas.configure(yscrollcommand=self._scrollbar.set)
-        
+
         self._scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        
+
         def _on_mousewheel(event):
             self._canvas.yview_scroll(int(-1 * (event.delta / 120)), 'units')
         self._canvas.bind_all('<MouseWheel>', _on_mousewheel)
-        
+
         self._listening = False
         self._listening_start_time = 0
         self._cancel_tx = False
         self.audio_interface = AudioInterface(self.dashboard.config.audio)
-        
+
         self._setup_device_selector()
         self._setup_morse_settings()
         self._setup_text_input()
@@ -55,30 +55,30 @@ class ControlPanel:
     def _setup_device_selector(self):
         frame = ttk.LabelFrame(self.container, text="Audio Devices (Hardware)")
         frame.pack(fill=tk.X, padx=5, pady=4)
-        
+
         in_devices = self.audio_interface.get_input_devices()
         out_devices = self.audio_interface.get_output_devices()
-        
+
         tk.Label(frame, text="Microphone:", bg=self.dashboard.accent_color, fg='white').pack(anchor='w', padx=5, pady=(2, 0))
         self.in_dev_map = {name: dev_id for dev_id, name in in_devices}
         in_names = list(self.in_dev_map.keys())
         default_in = in_names[0] if in_names else "Default"
-        
+
         self.in_dev_var = tk.StringVar(value=default_in)
         combo_in = ttk.Combobox(frame, textvariable=self.in_dev_var, values=in_names, state='readonly')
         combo_in.pack(fill=tk.X, padx=5, pady=2)
         combo_in.bind("<<ComboboxSelected>>", self._on_device_changed)
-        
+
         tk.Label(frame, text="Speaker:", bg=self.dashboard.accent_color, fg='white').pack(anchor='w', padx=5, pady=(2, 0))
         self.out_dev_map = {name: dev_id for dev_id, name in out_devices}
         out_names = list(self.out_dev_map.keys())
         default_out = out_names[0] if out_names else "Default"
-        
+
         self.out_dev_var = tk.StringVar(value=default_out)
         combo_out = ttk.Combobox(frame, textvariable=self.out_dev_var, values=out_names, state='readonly')
         combo_out.pack(fill=tk.X, padx=5, pady=2)
         combo_out.bind("<<ComboboxSelected>>", self._on_device_changed)
-        
+
         btn_test = ttk.Button(frame, text="Test Mic Level", command=self._on_test_mic)
         btn_test.pack(pady=4)
         self.mic_level_lbl = tk.Label(frame, text="Mic: Ready", bg=self.dashboard.accent_color, fg='#34d399')
@@ -87,38 +87,38 @@ class ControlPanel:
     def _setup_morse_settings(self):
         self.settings_frame = ttk.LabelFrame(self.container, text="Transceiver Settings")
         self.settings_frame.pack(fill=tk.X, padx=5, pady=5)
-        
+
         tk.Label(self.settings_frame, text="Mode:", bg=self.dashboard.accent_color, fg='white').pack(anchor='w', padx=5)
         self.mode_var = tk.StringVar(value=self.config.mode)
         combo_mode = ttk.Combobox(self.settings_frame, textvariable=self.mode_var, values=["morse", "ofdm", "steganography"], state='readonly')
         combo_mode.pack(fill=tk.X, padx=5, pady=2)
         combo_mode.bind("<<ComboboxSelected>>", self._on_mode_changed)
-        
+
         self.morse_frame = tk.Frame(self.settings_frame, bg=self.dashboard.accent_color)
-        
+
         tk.Label(self.morse_frame, text="Morse Speed (WPM):", bg=self.dashboard.accent_color, fg='white').pack(anchor='w', padx=5)
         self.wpm_var = tk.DoubleVar(value=self.config.morse_wpm)
         scale = tk.Scale(self.morse_frame, from_=5, to=100, orient=tk.HORIZONTAL, variable=self.wpm_var, 
                          bg=self.dashboard.accent_color, fg='white', highlightthickness=0)
         scale.pack(fill=tk.X, padx=5)
-        
+
         lbl = tk.Label(self.morse_frame, text="20-40 WPM for human listening; 100 WPM for fast file transfer.", 
                        bg=self.dashboard.accent_color, fg='#94a3b8', font=('Segoe UI', 8))
         lbl.pack(anchor='w', padx=5, pady=(0, 2))
 
         self.ofdm_frame = tk.Frame(self.settings_frame, bg=self.dashboard.accent_color)
-        
+
         tk.Label(self.ofdm_frame, text="QAM Order:", bg=self.dashboard.accent_color, fg='white').pack(anchor='w', padx=5)
         self.qam_var = tk.StringVar(value=str(self.config.qam.order))
         combo_qam = ttk.Combobox(self.ofdm_frame, textvariable=self.qam_var, values=["4", "16", "64"], state='readonly')
         combo_qam.pack(fill=tk.X, padx=5, pady=2)
-        
+
         self.stego_frame = tk.Frame(self.settings_frame, bg=self.dashboard.accent_color)
         tk.Label(self.stego_frame, text="Carrier Music (.wav):", bg=self.dashboard.accent_color, fg='white').pack(anchor='w', padx=5, pady=(5,0))
         self.carrier_path_var = tk.StringVar(value="No carrier selected")
         tk.Label(self.stego_frame, textvariable=self.carrier_path_var, bg=self.dashboard.accent_color, fg='#34d399', font=('Consolas', 8)).pack(anchor='w', padx=5)
         ttk.Button(self.stego_frame, text="📂 Select Carrier", command=self._on_browse_carrier).pack(fill=tk.X, padx=5, pady=2)
-        
+
         self._on_mode_changed()
 
     def _on_mode_changed(self, event=None):
@@ -140,12 +140,12 @@ class ControlPanel:
     def _setup_text_input(self):
         frame = ttk.LabelFrame(self.container, text="Text Transmission")
         frame.pack(fill=tk.X, padx=10, pady=8)
-        
+
         tk.Label(frame, text="TX Message:", bg=self.dashboard.accent_color, fg='white', font=('Segoe UI', 9, 'bold')).pack(anchor='w', padx=5, pady=(5,0))
         self.text_entry = tk.Entry(frame, bg=self.dashboard.bg_color, fg='white', insertbackground='white', font=('Consolas', 10), relief=tk.FLAT)
         self.text_entry.insert(0, "SOS AIRBUDDS")
         self.text_entry.pack(fill=tk.X, padx=5, pady=5, ipady=3)
-        
+
         btn_box = tk.Frame(frame, bg=self.dashboard.accent_color)
         btn_box.pack(fill=tk.X, padx=5, pady=5)
         ttk.Button(btn_box, text="▶ Transmit", command=self._on_transmit_text).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
@@ -155,13 +155,13 @@ class ControlPanel:
     def _setup_file_input(self):
         frame = ttk.LabelFrame(self.container, text="File Transmission")
         frame.pack(fill=tk.X, padx=10, pady=8)
-        
+
         self.file_path_var = tk.StringVar(value="No file selected")
         tk.Label(frame, textvariable=self.file_path_var, bg=self.dashboard.accent_color, fg='#34d399', anchor='w', font=('Consolas', 9)).pack(fill=tk.X, padx=5, pady=2)
-        
+
         btn_browse = ttk.Button(frame, text="📂 Select File...", command=self._on_browse_file)
         btn_browse.pack(fill=tk.X, padx=5, pady=5)
-        
+
         btn_box = tk.Frame(frame, bg=self.dashboard.accent_color)
         btn_box.pack(fill=tk.X, padx=5, pady=5)
         ttk.Button(btn_box, text="▶ Transmit", command=self._on_transmit_file).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
@@ -171,22 +171,22 @@ class ControlPanel:
     def _setup_rx_display_panel(self):
         frame = ttk.LabelFrame(self.container, text="Decoded RX Result")
         frame.pack(fill=tk.X, padx=5, pady=5)
-        
+
         self.rx_display = tk.Entry(frame, bg=self.dashboard.bg_color, fg='#34d399', insertbackground='white')
         self.rx_display.pack(fill=tk.X, padx=5, pady=(2, 5))
-        
+
         ttk.Button(frame, text="💾 Save Decoded RX to File", command=self._on_save_rx_to_file).pack(fill=tk.X, padx=5, pady=3)
 
     def _setup_wav_file_transfer(self):
         frame = ttk.LabelFrame(self.container, text="Audio File Transfer (WAV)")
         frame.pack(fill=tk.X, padx=5, pady=4)
-        
+
         ttk.Button(frame, text="📂 Upload & Decode Audio (.wav)", command=self._on_upload_decode_audio).pack(fill=tk.X, padx=5, pady=3)
 
     def _setup_rx_controls(self):
         frame = ttk.LabelFrame(self.container, text="Live Microphone Receiver")
         frame.pack(fill=tk.X, padx=5, pady=5)
-        
+
         ttk.Button(frame, text="Start Listening", command=self._on_start_listening).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2, pady=5)
         ttk.Button(frame, text="Stop & Decode", command=self._on_stop_listening).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=2, pady=5)
 
@@ -214,7 +214,7 @@ class ControlPanel:
         filepath = filedialog.askopenfilename()
         if filepath:
             self.file_path_var.set(filepath)
-            
+
     def _on_browse_carrier(self):
         filepath = filedialog.askopenfilename(filetypes=[("WAV Audio Files", "*.wav")])
         if filepath:
@@ -239,13 +239,11 @@ class ControlPanel:
         filename = os.path.basename(filepath)
         with open(filepath, 'rb') as f:
             raw = f.read()
-            
-        # Morse code is case-insensitive, so we MUST use Base32 for files
-        # to ensure perfect 1:1 reconstruction of the binary data at the receiver.
+
         if self.dashboard.config.mode == "morse":
             b32 = f"B32:{filename}:" + base64.b32encode(raw).decode('ascii')
             return b32.encode('utf-8')
-            
+
         try:
             return raw.decode('utf-8').encode('utf-8')
         except Exception:
@@ -273,7 +271,7 @@ class ControlPanel:
         save_path = filedialog.asksaveasfilename(defaultextension=".wav", filetypes=[("WAV Audio Files", "*.wav")])
         if not save_path: return
         self._apply_transceiver_config()
-        
+
         transceiver = self._get_transceiver()
         if self.dashboard.config.mode == "steganography":
             carrier_path = self.carrier_path_var.get()
@@ -283,9 +281,9 @@ class ControlPanel:
             tx_signal = transceiver.encode_with_carrier(text.encode('utf-8'), carrier_path)
         else:
             tx_signal = transceiver.encode(text.encode('utf-8'))
-            
+
         fs = self.dashboard.config.audio.sample_rate
-        
+
         wavfile.write(save_path, fs, (tx_signal * 32767).astype(np.int16))
         self.dashboard.set_status(f"Exported text audio to {os.path.basename(save_path)} ✓")
 
@@ -296,10 +294,10 @@ class ControlPanel:
             return
         save_path = filedialog.asksaveasfilename(defaultextension=".wav", filetypes=[("WAV Audio Files", "*.wav")])
         if not save_path: return
-        
+
         self._apply_transceiver_config()
         payload = self._read_file_payload(filepath)
-        
+
         transceiver = self._get_transceiver()
         if self.dashboard.config.mode == "steganography":
             carrier_path = self.carrier_path_var.get()
@@ -309,9 +307,9 @@ class ControlPanel:
             tx_signal = transceiver.encode_with_carrier(payload, carrier_path)
         else:
             tx_signal = transceiver.encode(payload)
-            
+
         fs = self.dashboard.config.audio.sample_rate
-        
+
         wavfile.write(save_path, fs, (tx_signal * 32767).astype(np.int16))
         self.dashboard.set_status(f"Exported file audio to {os.path.basename(save_path)} ✓")
 
@@ -324,7 +322,7 @@ class ControlPanel:
         try:
             self._cancel_tx = False
             transceiver = self._get_transceiver()
-            
+
             if self.dashboard.config.mode == "steganography":
                 carrier_path = self.carrier_path_var.get()
                 if not os.path.exists(carrier_path):
@@ -333,15 +331,14 @@ class ControlPanel:
                 tx_signal = transceiver.encode_with_carrier(data, carrier_path)
             else:
                 tx_signal = transceiver.encode(data)
-                
+
             dur = len(tx_signal) / self.dashboard.config.audio.sample_rate
-            
+
             self.dashboard.set_status(f"Playing Signal ({dur:.1f}s)...")
             self.dashboard.root.after(0, lambda: self.dashboard.update_plots(tx_signal=tx_signal, rx_signal=None))
-            
+
             self.audio_interface.play(tx_signal, blocking=False)
-            
-            # Poll for completion or cancellation
+
             elapsed = 0.0
             while elapsed < dur:
                 if self._cancel_tx:
@@ -350,7 +347,7 @@ class ControlPanel:
                     return
                 time.sleep(0.1)
                 elapsed += 0.1
-                
+
             self.dashboard.set_status(f"Transmission complete! ({dur:.1f}s)")
         except Exception as e:
             self.dashboard.set_status(f"TX Error: {e}")
@@ -359,7 +356,7 @@ class ControlPanel:
         if self._listening: return
         self._listening = True
         self._apply_transceiver_config()
-        
+
         try:
             self.audio_interface.start_stream()
             self._listening_start_time = time.time()
@@ -390,16 +387,15 @@ class ControlPanel:
                 prefix = parts[0]
                 filename = f"rx_file_{stamp}.bin"
                 data_str = parts[1]
-                
+
             save_dir = os.path.join(os.getcwd(), "received_files")
             os.makedirs(save_dir, exist_ok=True)
-            
-            # Handle duplicates
+
             out_path = os.path.join(save_dir, filename)
             if os.path.exists(out_path):
                 base, ext = os.path.splitext(filename)
                 out_path = os.path.join(save_dir, f"{base}_{stamp}{ext}")
-                
+
             try:
                 if prefix == "B64":
                     raw_bytes = base64.b64decode(data_str)
@@ -421,11 +417,11 @@ class ControlPanel:
             if len(rx_signal) == 0:
                 self.dashboard.set_status("No audio recorded.")
                 return
-                
+
             transceiver = self._get_transceiver()
             payload, meta = transceiver.decode(rx_signal)
             decoded_str = payload.decode('utf-8', errors='replace')
-            
+
             def _update():
                 self.rx_display.delete(0, tk.END)
                 display_text = self._handle_auto_save(decoded_str)
@@ -437,12 +433,12 @@ class ControlPanel:
                     self.dashboard.set_status(f"Decode Error: No valid data found (CRC: {meta.get('crc_valid')})")
                 else:
                     self.dashboard.set_status(f"Decoded: '{decoded_str}'")
-                    
+
                 constellation = None
                 if hasattr(transceiver, 'get_rx_constellation'):
                     constellation = transceiver.get_rx_constellation()
                 self.dashboard.update_plots(tx_signal=None, rx_signal=rx_signal, constellation=constellation)
-                
+
             self.dashboard.root.after(0, _update)
         except Exception as e:
             self.dashboard.set_status(f"RX Error: {e}")
@@ -452,14 +448,14 @@ class ControlPanel:
         if not content:
             messagebox.showwarning("Warning", "No decoded RX content to save.")
             return
-            
+
         save_path = filedialog.asksaveasfilename(
             title="Save Decoded RX Content to File",
             defaultextension=".txt",
             filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")]
         )
         if not save_path: return
-        
+
         try:
             if content.startswith("B64:"):
                 raw_bytes = base64.b64decode(content[4:])
@@ -467,7 +463,7 @@ class ControlPanel:
                     f.write(raw_bytes)
             elif content.startswith("B32:"):
                 b32_data = content[4:].strip()
-                # Base32 requires padding to be a multiple of 8
+
                 pad_len = (8 - (len(b32_data) % 8)) % 8
                 b32_data += "=" * pad_len
                 raw_bytes = base64.b32decode(b32_data)
@@ -484,7 +480,7 @@ class ControlPanel:
         file_path = filedialog.askopenfilename(filetypes=[("WAV Audio Files", "*.wav"), ("All Files", "*.*")])
         if not file_path: return
         self._apply_transceiver_config()
-        
+
         self.dashboard.set_status("Decoding WAV...")
         threading.Thread(target=self._decode_file_worker, args=(file_path,), daemon=True).start()
 
@@ -494,14 +490,14 @@ class ControlPanel:
             audio = raw.astype(np.float32) / 32768.0 if raw.dtype == np.int16 else raw.astype(np.float32)
             if audio.ndim > 1: audio = np.mean(audio, axis=-1)
             audio = audio.flatten()
-            
+
             if sr != self.dashboard.config.audio.sample_rate:
                 gcd = math.gcd(sr, self.dashboard.config.audio.sample_rate)
                 audio = signal.resample_poly(audio, self.dashboard.config.audio.sample_rate // gcd, sr // gcd).astype(np.float32)
-                
+
             transceiver = self._get_transceiver()
             payload, meta = transceiver.decode(audio)
-            
+
             def _update():
                 self.rx_display.delete(0, tk.END)
                 text = payload.decode('utf-8', errors='replace')
@@ -511,12 +507,12 @@ class ControlPanel:
                     self.dashboard.set_status(f"WAV Decode Error: No valid data found (CRC: {meta.get('crc_valid')})")
                 else:
                     self.dashboard.set_status(f"WAV Decoded: '{text}'")
-                    
+
                 constellation = None
                 if hasattr(transceiver, 'get_rx_constellation'):
                     constellation = transceiver.get_rx_constellation()
                 self.dashboard.update_plots(tx_signal=None, rx_signal=audio, constellation=constellation)
-                
+
             self.dashboard.root.after(0, _update)
         except Exception as e:
             self.dashboard.set_status(f"WAV Decode Error: {e}")
