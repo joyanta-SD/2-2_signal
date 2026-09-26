@@ -372,8 +372,12 @@ class ControlPanel:
         threading.Thread(target=self._rx_decode_worker, daemon=True).start()
 
     def _handle_auto_save(self, text: str) -> str:
-        if text.startswith("B32:") or text.startswith("B64:"):
-            parts = text.split(":", 2)
+        if "B32:" in text or "B64:" in text:
+            # Find the actual start of the B32/B64 sequence
+            start_idx = text.find("B32:")
+            if start_idx == -1: start_idx = text.find("B64:")
+            
+            parts = text[start_idx:].split(":", 2)
             stamp = time.strftime("%Y%m%d_%H%M%S")
             if len(parts) == 3:
                 prefix, filename, data_str = parts
@@ -392,9 +396,12 @@ class ControlPanel:
 
             try:
                 if prefix == "B64":
-                    raw_bytes = base64.b64decode(data_str)
+                    b64_data = ''.join(c for c in data_str if c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=')
+                    pad = (4 - (len(b64_data) % 4)) % 4
+                    b64_data += "=" * pad
+                    raw_bytes = base64.b64decode(b64_data)
                 else:
-                    b32_data = data_str.strip()
+                    b32_data = ''.join(c for c in data_str.upper() if c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567=')
                     pad = (8 - (len(b32_data) % 8)) % 8
                     b32_data += "=" * pad
                     raw_bytes = base64.b32decode(b32_data)

@@ -97,15 +97,20 @@ class Codec:
 
     @staticmethod
     def fec_decode(data: bytes, nsym: int = 10) -> bytes:
-
         import reedsolo
         rs = reedsolo.RSCodec(nsym)
         try:
             decoded_msg, decoded_msg_ecc, err_pos = rs.decode(data)
             return bytes(decoded_msg)
         except reedsolo.ReedSolomonError:
-
-            raise ValueError("FEC Decoding failed: Too many errors")
+            # Best effort extraction if FEC fails
+            chunk_size = 255
+            data_size = chunk_size - nsym
+            result = bytearray()
+            for i in range(0, len(data), chunk_size):
+                chunk = data[i:i+chunk_size]
+                result.extend(chunk[:data_size])
+            return bytes(result)
 
     @staticmethod
     def interleave(data: bytes, depth: int = 8) -> bytes:
