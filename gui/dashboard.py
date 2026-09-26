@@ -36,7 +36,7 @@ class Dashboard:
         self._setup_status_bar()
 
     def _setup_window(self):
-        self.root.title('AirBudds — Morse Code Transceiver')
+        self.root.title('AirBudds - Acoustic Data Modem')
         self.root.geometry('1400x900')
         self.root.columnconfigure(0, weight=1)
         self.root.columnconfigure(1, weight=3)
@@ -90,7 +90,7 @@ class Dashboard:
 
     def _setup_status_bar(self):
         self.status_var = tk.StringVar()
-        self.status_var.set("Ready | Morse Code Transceiver")
+        self.status_var.set("Ready | AirBudds Acoustic Data Modem")
         self.status_bar = tk.Label(self.root, textvariable=self.status_var, bd=1, relief=tk.SUNKEN, anchor=tk.W, bg=self.accent_color, fg=self.text_color, font=("Consolas", 10))
         self.status_bar.grid(row=1, column=0, columnspan=2, sticky='ew')
 

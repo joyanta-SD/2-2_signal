@@ -240,15 +240,8 @@ class ControlPanel:
         with open(filepath, 'rb') as f:
             raw = f.read()
 
-        if self.dashboard.config.mode == "morse":
-            b32 = f"B32:{filename}:" + base64.b32encode(raw).decode('ascii')
-            return b32.encode('utf-8')
-
-        try:
-            return raw.decode('utf-8').encode('utf-8')
-        except Exception:
-            b64 = f"B64:{filename}:" + base64.b64encode(raw).decode('ascii')
-            return b64.encode('utf-8')
+        b32 = f"B32:{filename}:" + base64.b32encode(raw).decode('ascii')
+        return b32.encode('utf-8')
 
     def _on_transmit_text(self):
         text = self.text_entry.get().strip()
@@ -374,7 +367,8 @@ class ControlPanel:
     def _on_stop_listening(self):
         if not self._listening: return
         self._listening = False
-        self.dashboard.set_status("Processing recorded Morse code...")
+        mode_name = self.dashboard.config.mode.upper()
+        self.dashboard.set_status(f"Processing recorded {mode_name} data...")
         threading.Thread(target=self._rx_decode_worker, daemon=True).start()
 
     def _handle_auto_save(self, text: str) -> str:

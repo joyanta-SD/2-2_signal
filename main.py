@@ -15,7 +15,7 @@ from core.ofdm_transceiver import OFDMTransceiver
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="AirBudds",
-        description="AirBudds Morse Code Transceiver",
+        description="AirBudds Acoustic Data Modem",
     )
     mode = p.add_mutually_exclusive_group()
     mode.add_argument("--gui", action="store_true", default=True, help="Launch the interactive dashboard (default).")
